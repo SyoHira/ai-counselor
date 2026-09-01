@@ -108,3 +108,53 @@ textarea {
 .card-hover:active {
   transform: translateY(0);
 }
+
+/* ── 物理学習アプリ（ダークテーマ） ───────────────────────── */
+.phys-grid-bg {
+  background-image:
+    linear-gradient(rgba(124, 140, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 140, 255, 0.055) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.phys-glow {
+  box-shadow: 0 0 40px -18px rgba(124, 140, 255, 0.9);
+}
+
+/* KaTeXをダーク背景に馴染ませる */
+.phys-dark .katex {
+  color: #e7eaf6;
+  font-size: 1.02em;
+}
+.phys-dark .katex-display {
+  margin: 0.6em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+input[type='range'].phys-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  border-radius: 999px;
+  background: #252b45;
+  outline: none;
+}
+input[type='range'].phys-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #7c8cff;
+  cursor: pointer;
+  border: 2px solid #0e111c;
+}
+input[type='range'].phys-range::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #7c8cff;
+  cursor: pointer;
+  border: 2px solid #0e111c;
+}
