@@ -258,9 +258,12 @@ test('カリキュラム: 物理数学が4段階すべてに用意されてい�
   assert.ok(math.length >= 20, `物理数学が ${math.length} 単元`);
 });
 
-test('カリキュラム: 物理数学の全単元にイメージでの説明がある', () => {
-  for (const m of MODULES.filter((x) => x.track === 'math')) {
-    assert.ok(typeof m.intuition === 'string' && m.intuition.length >= 40, `${m.id} に intuition がない`);
+test('カリキュラム: 全単元にイメージでの説明がある', () => {
+  for (const m of MODULES) {
+    assert.ok(typeof m.intuition === 'string', `${m.id} に intuition がない`);
+    assert.ok(m.intuition.length >= 40, `${m.id} の intuition が短すぎる (${m.intuition.length}文字)`);
+    assert.ok(m.intuition.length <= 400, `${m.id} の intuition が長すぎる (${m.intuition.length}文字)`);
+    assert.ok(m.intuition !== m.summary, `${m.id} の intuition が summary と同じ`);
   }
 });
 
