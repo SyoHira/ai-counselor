@@ -202,3 +202,29 @@ test('カリキュラム: 量子系が全体の3割以上を占める', () => {
   const q = STATS.byTrack.qm + STATS.byTrack.qinfo;
   assert.ok(q / STATS.total >= 0.3, `量子系 ${q}/${STATS.total}`);
 });
+
+test('カリキュラム: 前提に段階の逆転がない（上の段階を前提にしない）', () => {
+  const order = { hs: 0, ug: 1, grad: 2, phd: 3 };
+  for (const m of MODULES) {
+    for (const p of m.prereqs || []) {
+      const pm = MODULE_MAP.get(p);
+      assert.ok(
+        order[pm.level] <= order[m.level],
+        `${m.id}(${m.level}) が上の段階の ${pm.id}(${pm.level}) を前提にしている`
+      );
+    }
+  }
+});
+
+test('カリキュラム: IDに埋め込んだ段階と level が一致する', () => {
+  for (const m of MODULES) {
+    assert.ok(m.id.includes(`-${m.level}-`), `${m.id} の level は ${m.level}`);
+  }
+});
+
+test('カリキュラム: ラボの紐付けが実在するラボを指す', () => {
+  const known = new Set(['circuit', 'bloch', 'well', 'tunnel']);
+  for (const m of MODULES) {
+    for (const l of m.labs || []) assert.ok(known.has(l), `${m.id} が未知のラボ ${l} を指している`);
+  }
+});

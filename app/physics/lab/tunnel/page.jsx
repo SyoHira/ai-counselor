@@ -237,7 +237,7 @@ export default function TunnelLab() {
         <SectionTitle>試してみること</SectionTitle>
         <ul className="text-[12px] text-qmute space-y-2 leading-relaxed">
           <li>· 幅 a を 2倍にすると透過率がどれだけ落ちるか。<Tex>{'T\\sim e^{-2\\kappa a}'}</Tex> の指数依存性が効きます（走査型トンネル顕微鏡が原子分解能を持つ理由）。</li>
-          <li>· E &gt; V₀ でも反射が残ること。<Tex>{'\\sin(k_2a)=0'}</Tex> となる特定のエネルギーでは透過率がちょうど1になります（共鳴透過／Ramsauer–Townsend効果）。</li>
+          <li>· E &gt; V₀ でも反射が残ること。<Tex>{'\\sin(k_2a)=0'}</Tex> となる特定のエネルギーでは透過率がちょうど1になります（共鳴透過）。引力の井戸で同じことが起きるのが、希ガス中の低速電子で観測されるRamsauer–Townsend効果です。</li>
           <li>· σ を小さくすると波束は速く広がります。位置を絞るほど運動量幅が広がるという不確定性関係の直接の帰結です。</li>
           <li>· 障壁内部の |ψ|² が指数的に減衰していること。エバネッセント波は「存在するが伝播しない」波です。</li>
         </ul>

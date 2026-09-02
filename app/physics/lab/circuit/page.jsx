@@ -343,7 +343,7 @@ export default function CircuitLab() {
           </p>
           <p>
             測定確率は <Tex>{'p(x)=|\\langle x|\\psi\\rangle|^2'}</Tex>、Blochベクトルは縮約密度行列
-            <Tex>{'\\rho_q=\\mathrm{Tr}_{\\bar q}|\\psi\\rangle\\langle\\psi|'}</Tex> から
+            <Tex>{'\\rho_q=\\mathrm{Tr}_{\\bar q}\\,\\rho'}</Tex>（測定を含まない回路では <Tex>{'\\rho=|\\psi\\rangle\\langle\\psi|'}</Tex>、測定後は結果を平均した混合状態）から
             <Tex>{'\\rho=\\tfrac12(I+\\mathbf r\\cdot\\boldsymbol\\sigma)'}</Tex> として取り出しています。
             エントロピーは <Tex>{'S=-\\mathrm{Tr}\\rho_q\\log_2\\rho_q'}</Tex>。
           </p>
