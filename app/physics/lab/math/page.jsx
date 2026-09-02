@@ -182,7 +182,7 @@ function FourierSection() {
         <label className="block mt-3">
           <span className="text-[11.5px] text-qmute">
             項数 N = <span className="text-qink tabular-nums">{N}</span>
-            　二乗平均誤差 <span className="text-photon tabular-nums">{fourierError(w, N).toFixed(4)}</span>
+            　二乗平均平方根誤差 <span className="text-photon tabular-nums">{fourierError(w, N).toFixed(4)}</span>
           </span>
           <input type="range" className="phys-range w-full mt-1.5" min={1} max={60} step={1}
             value={N} onChange={(e) => setN(parseInt(e.target.value, 10))} />
@@ -209,7 +209,7 @@ function FourierSection() {
         </div>
         <p className="text-[12px] text-qmute mt-3 leading-relaxed">
           係数の落ち方は元の関数の滑らかさで決まります。跳びがあると <Tex>{'1/n'}</Tex>、折れ曲がりだと <Tex>{'1/n^2'}</Tex>、
-          何度でも微分できるなら指数的に落ちます。量子力学で波動関数の連続性・微分可能性にこだわるのは、
+          無限回微分可能な周期関数では任意の逆べきより速く減りますが、指数的な減衰には解析性などのより強い条件が必要です。量子力学で波動関数の連続性・微分可能性にこだわるのは、
           ここが効くからです。
         </p>
       </Card>
@@ -332,7 +332,7 @@ function EigenSection() {
               {e.real ? (
                 <>
                   <p>固有値 λ₁ = <span className="text-amberq tabular-nums">{e.values[0].toFixed(3)}</span>、λ₂ = <span className="text-amberq tabular-nums">{e.values[1].toFixed(3)}</span></p>
-                  <p className="text-[11.5px]">黄色い矢印が固有ベクトル、桃色がそれを写した先。<span className="text-qink">向きが変わらず長さだけ λ 倍</span>になっています。</p>
+                  <p className="text-[11.5px]">黄色い矢印が固有ベクトル、桃色がそれを写した先。<span className="text-qink">同じ直線上で λ 倍（負なら反転、ゼロなら原点へ）</span>になっています。</p>
                 </>
               ) : (
                 <>
@@ -351,7 +351,7 @@ function EigenSection() {
           <li>· <span className="text-qink">基準振動</span>：連成振動子で「全体が同じ振動数で揺れる形」が固有ベクトル、振動数の2乗が固有値。</li>
           <li>· <span className="text-qink">量子状態</span>：ハミルトニアンの固有ベクトルが定常状態、固有値がエネルギー。時間が経っても形が変わらない状態です。</li>
           <li>· <span className="text-qink">慣性テンソル</span>：固有ベクトルが主軸。その向きで回せば、コマはふらつきません。</li>
-          <li>· エルミート行列（実対称行列）なら固有値は必ず実数で、固有ベクトルは直交します。観測値が実数であることの数学的な保証がこれです。</li>
+          <li>· エルミート行列（実対称行列）なら固有値は必ず実数で、固有ベクトルを直交するように選べます。観測値が実数であることの数学的な保証がこれです。</li>
         </ul>
       </Card>
     </div>

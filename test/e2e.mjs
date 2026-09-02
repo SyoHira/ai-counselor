@@ -71,7 +71,7 @@ await page.goto(BASE + '/physics/curriculum', { waitUntil: 'networkidle' });
 const all = await page.locator('a[href^="/physics/module/"]').count();
 check('カリキュラム: 全単元が並ぶ', all === STATS.total, `${all} 件 / 定義 ${STATS.total} 件`);
 await page.getByRole('button', { name: /量子情報・量子計算/ }).click();
-await page.waitForFunction(() => document.querySelectorAll('a[href^="/physics/module/"]').length === 18);
+await page.waitForFunction(count => document.querySelectorAll('a[href^="/physics/module/"]').length === count, STATS.byTrack.qinfo);
 const qinfo = await page.locator('a[href^="/physics/module/"]').count();
 check('カリキュラム: 量子情報で絞れる', qinfo === STATS.byTrack.qinfo, `${qinfo} 件 / 定義 ${STATS.byTrack.qinfo} 件`);
 await page.fill('input[placeholder*="キーワード"]', 'Grover');
@@ -89,7 +89,30 @@ const hsText = await page.textContent('body');
 for (const topic of ['力のつり合い', '運動量と力積', '剛体のつり合い', '直流回路', 'コンデンサー', 'ローレンツ力', '交流', '熱量の保存', 'ドップラー', '全反射', '原子核', '有効数字']) {
   check(`高校: 「${topic}」の単元がある`, hsText.includes(topic));
 }
-check('高校: 物理基礎と物理の区分が表示される', hsText.includes('物理基礎') && hsText.includes('物理'));
+for (const course of ['物理基礎', '物理']) {
+  const expected = MODULES.filter(m => m.level === 'hs' && m.course === course).length;
+  const badges = await page.locator('a[href^="/physics/module/"] span').filter({ hasText: new RegExp(`^${course}$`) }).count();
+  check(`高校: ${course}の区分が各カードに表示される`, badges === expected, `${badges} 件 / 定義 ${expected} 件`);
+}
+
+// ── 段階を移した単元: 旧リンクと保存済みデータの互換性
+await page.evaluate(() => {
+  localStorage.setItem('physics.progress.v1', JSON.stringify({ modules: {
+    'qm-phd-04': { status: 'mastered', reps: 2, attempts: 4, correct: 4, updatedAt: '2026-01-01T00:00:00Z', reviewAt: '2099-01-01T00:00:00Z' },
+  } }));
+  localStorage.setItem('physics.tutor.v1', JSON.stringify({ 'qm-phd-04': [{ role: 'user', content: '保存した場の量子論の質問' }] }));
+});
+await page.goto(BASE + '/physics/module/qm-phd-04', { waitUntil: 'networkidle' });
+check('旧単元URL: 移動先の教材と習得状態を表示する', (await page.locator('h1').textContent()).includes('場の量子論 I') && await page.locator('header span').filter({ hasText: /^習得$/ }).count() === 1);
+check('旧単元URL: 演習へのリンクは新IDを使う', await page.getByRole('link', { name: '演習をつくる' }).getAttribute('href') === '/physics/practice?module=qm-grad-09');
+await page.goto(BASE + '/physics/practice?module=qm-phd-04', { waitUntil: 'networkidle' });
+check('旧演習URL: 新IDの単元が選択される', await page.getByRole('combobox', { name: '単元' }).inputValue() === 'qm-grad-09');
+await page.goto(BASE + '/physics/tutor?module=qm-grad-09', { waitUntil: 'networkidle' });
+check('単元ID移動: チューター履歴を引き継ぐ', (await page.textContent('body')).includes('保存した場の量子論の質問'));
+await page.getByRole('button', { name: '会話を消す', exact: true }).click();
+await page.goto(BASE + '/physics/tutor?module=qm-phd-04', { waitUntil: 'networkidle' });
+check('単元ID移動: 消した会話が旧URLで復活しない', !(await page.textContent('body')).includes('保存した場の量子論の質問'));
+await page.evaluate(() => { localStorage.removeItem('physics.progress.v1'); localStorage.removeItem('physics.tutor.v1'); });
 
 // ── 単元詳細: 数式と進捗
 await page.goto(BASE + '/physics/module/qm-ug-02', { waitUntil: 'networkidle' });
@@ -184,10 +207,10 @@ mtxt = await page.textContent('body');
 check('数学ラボ: Gaussの法則の説明が出る', mtxt.includes('半径を変えても変わりません'));
 await page.getByRole('button', { name: 'フーリエ級数' }).click();
 await page.waitForTimeout(500);
-const errBefore = parseFloat((await page.textContent('body')).match(/二乗平均誤差\s*([\d.]+)/)[1]);
+const errBefore = parseFloat((await page.textContent('body')).match(/二乗平均平方根誤差\s*([\d.]+)/)[1]);
 await page.locator('input[type=range]').first().fill('40');
 await page.waitForTimeout(500);
-const errAfter = parseFloat((await page.textContent('body')).match(/二乗平均誤差\s*([\d.]+)/)[1]);
+const errAfter = parseFloat((await page.textContent('body')).match(/二乗平均平方根誤差\s*([\d.]+)/)[1]);
 check('数学ラボ: 項数を増やすと誤差が減る', errAfter < errBefore, `${errBefore} → ${errAfter}`);
 await page.getByRole('button', { name: '複素写像' }).click();
 await page.waitForTimeout(400);

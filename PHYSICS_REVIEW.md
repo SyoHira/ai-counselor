@@ -1,6 +1,6 @@
 # Quantum Physics Lab: review evidence
 
-Review base: `5af080b0ce3619ac324efcecd900a0ae1d8c445f` (the original feature plus browser-test/viewport follow-up). All six feature areas are retained. This record distinguishes locally reproduced evidence from deployment prerequisites.
+Initial review base: `5af080b0ce3619ac324efcecd900a0ae1d8c445f`. Follow-up review base: `5bf52ee274a94a54434c1283b28b7bb6a3731e03`, including the academic corrections, expansion to 150 modules, and mathematics visualizer. All six feature areas are retained. No posted review comments or inline threads were present when this follow-up was checked. This record distinguishes reproduced evidence from deployment prerequisites.
 
 ## Findings and fixes, ordered by impact
 
@@ -19,6 +19,23 @@ Review base: `5af080b0ce3619ac324efcecd900a0ae1d8c445f` (the original feature pl
 
 The six initial regression tests all failed on the review base and passed after fixes. Three further regression tests and four numerical/data validation tests cover the added behavior. The original 21 numerical/data tests remain intact.
 
+## Follow-up review and reflection
+
+The curriculum and mathematics follow-ups corrected content and expanded coverage, but changed public module identifiers without migrating their consumers. They also left this report and the PR description tied to the earlier revision.
+
+| Finding | Applied correction | Evidence |
+|---|---|---|
+| Field-theory IDs changed from `qm-phd-04/05` to `qm-grad-09/10`; saved progress disappeared from current-module statistics, old links failed, and tutor histories became detached. | Resolve aliases across module lookup, learning paths, API context and practice selection. Normalize progress and review deadlines; keep the newer snapshot when both IDs exist without adding overlapping attempts. Restore old tutor history when no canonical thread exists, including correct behavior after clearing. | Three regression tests failed before the fix. Browser checks cover the old detail/practice links, saved mastery, tutor recovery and clearing. |
+| Review tests assumed calendar days always contain 24 hours, so the 90-day check failed in a daylight-saving timezone. | Keep calendar-day scheduling; freeze test dates at a daylight-saving transition and compare calendar dates. | All 66 tests pass in both `TZ=UTC` and `TZ=America/Los_Angeles`. |
+| The new course-badge check could pass because “物理” is a substring of “物理基礎”. | Count exact badge text inside module cards against the defined course counts. | Browser checks require 13 basic-physics badges and 25 physics badges. |
+| The circuit explanation still used a pure-state-only probability formula after introducing mixed states. | Use `p(x)=⟨x|ρ|x⟩` generally; label the amplitude-squared formula as the pure-state case and use `ρ_q` for the reduced state. | Consistent with the existing density-matrix regressions and [IBM’s density-matrix formulation](https://quantum.cloud.ibm.com/learning/courses/general-formulation-of-quantum-information/density-matrices/density-matrix-basics). |
+| Collision momentum conservation and uncertainty propagation omitted their conditions. | State the negligible external impulse assumption. Distinguish a first-order worst-case error bound from uncorrelated standard uncertainties and mention covariance for correlated inputs. | Uncertainty wording follows [NIST’s propagation law](https://www.nist.gov/pml/nist-technical-note-1297/nist-tn-1297-appendix-law-propagation-uncertainty); all 230 curriculum equations render. |
+| Counts and test claims remained at 114 modules / 153 equations and implied an uncommitted wavepacket-to-plane-wave equality test. | Update the inventory and describe the committed free-Gaussian propagation test precisely. | 150 modules (38/51/41/20), 13 tracks, 46 quantum modules, 230 equations, and five labs. |
+
+The newly arrived mathematics visualizer also returned the x-axis for both eigenvectors of a diagonal matrix, so one displayed direction violated `Av = λv`. The repair chooses a nonzero, well-scaled null-space vector and supplies an independent basis for scalar matrices. A regression failed before the fix and now covers diagonal, zero, scalar, triangular and tiny off-diagonal cases. The Fourier error display is labeled root-mean-square error, matching its actual square-root calculation. Smoothness alone is no longer claimed to guarantee exponential Fourier decay; that requires stronger analyticity conditions, consistent with [Tao’s lecture notes on decay and analyticity](https://terrytao.wordpress.com/2021/01/23/246b-notes-2-some-connections-with-the-fourier-transform/).
+
+The review lesson is to treat module IDs as persistent data contracts, not just display labels. Rendering tests establish syntax, and inventory checks establish presence; neither proves scientific correctness or curriculum completeness. Changes to learning content must also check saved data, links, and the scope of claimed evidence.
+
 ## Reproduction
 
 Use Node.js 22.12 or later:
@@ -33,13 +50,14 @@ npm run test:e2e
 
 The browser runner owns and terminates its server, clears `ANTHROPIC_API_KEY`, and writes screenshots under `test/screenshots/` (ignored by Git). `CHROME_PATH` can select an already installed Chromium binary. CI runs these commands and uploads screenshots.
 
-## Local verification
+## Current verification
 
-- `npm test`: **50/50 passed**: 21 original tests, 9 bug regressions, 16 mocked API/stream tests, and 4 numerical/data validation tests.
+- `npm test`: **66/66 passed**: 21 original tests, 12 curriculum/math checks from the intervening commits, 13 bug regressions, 16 mocked API/stream tests, and 4 numerical/data validation tests. The full suite also passes in UTC and America/Los_Angeles with review dates fixed across the daylight-saving transition.
 - `npm run build`: **passed**; includes static generation and dynamic routes. Warnings about package module-type detection and the age of Browserslist data remain non-blocking.
-- Browser suite: **54/54 checks passed**, including all ten physics page types at 390px width, with **no unexpected runtime errors**. Successful AI UI paths use fixtures; missing-key paths reach the isolated server. External Google Fonts CSS is stubbed for deterministic, network-independent checks.
+- Current local browser suite: **82/82 checks passed**, including all eleven physics page types at 390px width, with **no unexpected runtime errors**. Successful AI UI paths use fixtures; missing-key paths reach the isolated server. External Google Fonts CSS is stubbed for deterministic, network-independent checks.
+- The standard browser download timed out during this follow-up; the local run again used Chromium 149 via `CHROME_PATH`. The [PR Checks](https://github.com/SyoHira/ai-counselor/pull/2/checks) record the separate run using the browser matching Playwright; match the commit before treating a run as evidence.
 - Runtime: Node.js **24.19.0**, npm **11.9.0**, Next.js **14.2.35**, Playwright **1.62.1**. Local browser: headless Chromium **149.0.7827.0** via `CHROME_PATH`; the standard Playwright browser download timed out in this environment. CI installs the browser matching the pinned Playwright release, so its result is separate evidence.
-- Data audit: **114 modules** (15/43/36/20 by level), **13 tracks**, **44 quantum modules**, **153 equations**. Every equation renders with KaTeX and every track/lab reference resolves. Rendering is not a scientific content review.
+- Data audit: **150 modules** (38/51/41/20 by level), **13 tracks**, **46 quantum modules**, **230 equations**. Every equation renders with KaTeX and every track/lab reference resolves. Rendering is not a scientific content review.
 - Default tunnel case: measured transmission about **5.1%**, normalization **1.000000**; the browser acceptance interval is **3.5–7%**. The earlier 5.3% momentum-weighted comparison had no committed reproducer and is no longer asserted as verified evidence.
 
 ## What the numerical tests establish
@@ -61,7 +79,7 @@ The browser runner owns and terminates its server, clears `ANTHROPIC_API_KEY`, a
 
 1. `lib/quantum/densityMatrix.js`, `circuit.js`, `presets.js` and numerical regressions.
 2. `lib/physics/apiValidation.js`, both physics API routes and `physics-api.test.mjs`.
-3. Progress scheduling and the practice/tutor request lifecycle, then browser regressions.
+3. Module-ID compatibility, progress scheduling and the practice/tutor request lifecycle, then browser regressions.
 4. CI/setup and corrected claims in `PHYSICS_APP.md`.
 
 The original `/`, `/chat`, and `/api/chat` implementations are unchanged by this PR. Shared root layout viewport metadata was changed by the preceding follow-up commit; shared CSS, Tailwind configuration and dependencies are also part of the review surface. The two apps should not be described as having zero shared impact.

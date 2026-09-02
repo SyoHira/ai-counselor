@@ -338,13 +338,13 @@ export default function CircuitLab() {
         <SectionTitle>この計算がしていること</SectionTitle>
         <div className="text-[12px] text-qmute space-y-2 leading-relaxed">
           <p>
-            n 量子ビットの状態は <Tex>{'2^n'}</Tex> 個の複素振幅で表されます。各ゲートはその振幅ベクトルに対するユニタリ変換で、
+            測定前の n 量子ビットの純粋状態は <Tex>{'2^n'}</Tex> 個の複素振幅で表されます。各ゲートはその振幅ベクトルに対するユニタリ変換で、
             ここでは対象ビットのペア <Tex>{'(|{\\cdots}0{\\cdots}\\rangle, |{\\cdots}1{\\cdots}\\rangle)'}</Tex> ごとに 2×2 行列を掛けています。
           </p>
           <p>
-            測定確率は <Tex>{'p(x)=|\\langle x|\\psi\\rangle|^2'}</Tex>、Blochベクトルは縮約密度行列
+            測定確率は <Tex>{'p(x)=\\langle x|\\rho|x\\rangle'}</Tex>（純粋状態なら <Tex>{'p(x)=|\\langle x|\\psi\\rangle|^2'}</Tex>）、Blochベクトルは縮約密度行列
             <Tex>{'\\rho_q=\\mathrm{Tr}_{\\bar q}\\,\\rho'}</Tex>（測定を含まない回路では <Tex>{'\\rho=|\\psi\\rangle\\langle\\psi|'}</Tex>、測定後は結果を平均した混合状態）から
-            <Tex>{'\\rho=\\tfrac12(I+\\mathbf r\\cdot\\boldsymbol\\sigma)'}</Tex> として取り出しています。
+            <Tex>{'\\rho_q=\\tfrac12(I+\\mathbf r\\cdot\\boldsymbol\\sigma)'}</Tex> として取り出しています。
             エントロピーは <Tex>{'S=-\\mathrm{Tr}\\rho_q\\log_2\\rho_q'}</Tex>。
           </p>
         </div>

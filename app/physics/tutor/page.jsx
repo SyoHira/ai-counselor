@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { LEVELS, getModule } from '@/lib/physics/curriculum';
+import { MODULE_ID_ALIASES, canonicalModuleId } from '@/lib/physics/moduleIds';
 import { MODES } from '@/lib/physics/tutorPrompt';
 import { logSession } from '@/lib/physics/progress';
 import { Card, Badge, levelTone } from '@/components/physics/ui';
@@ -24,8 +25,13 @@ function loadThreads() {
   try {
     const data = JSON.parse(window.localStorage.getItem(STORE_KEY) || '{}');
     if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
-    return Object.fromEntries(Object.entries(data).filter(([, messages]) => Array.isArray(messages))
+    const threads = Object.fromEntries(Object.entries(data).filter(([, messages]) => Array.isArray(messages))
       .map(([key, messages]) => [key, messages.filter(m => m && ['user', 'assistant'].includes(m.role) && typeof m.content === 'string').slice(-24)]));
+    for (const [oldId, id] of Object.entries(MODULE_ID_ALIASES)) {
+      // A deliberately cleared canonical thread must not resurrect old messages.
+      if (!Object.hasOwn(threads, id) && Object.hasOwn(threads, oldId)) threads[id] = threads[oldId];
+    }
+    return threads;
   } catch {
     return {};
   }
@@ -44,7 +50,7 @@ function saveThread(key, messages) {
 
 function TutorInner() {
   const params = useSearchParams();
-  const moduleId = params.get('module') || '';
+  const moduleId = canonicalModuleId(params.get('module') || '');
   const mod = moduleId ? getModule(moduleId) : null;
 
   const [level, setLevel] = useState(mod?.level || 'ug');

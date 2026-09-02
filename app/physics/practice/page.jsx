@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { LEVELS, MODULES, getModule } from '@/lib/physics/curriculum';
+import { canonicalModuleId } from '@/lib/physics/moduleIds';
 import { recordAttempt, getModuleProgress, logSession } from '@/lib/physics/progress';
 import { Card, SectionTitle, Button, Badge, levelTone } from '@/components/physics/ui';
 import RichText from '@/components/physics/RichText';
@@ -16,7 +17,7 @@ const DIFFICULTIES = [
 
 function PracticeInner() {
   const params = useSearchParams();
-  const initialModule = params.get('module') || '';
+  const initialModule = canonicalModuleId(params.get('module') || '');
 
   const [moduleId, setModuleId] = useState(initialModule);
   const [level, setLevel] = useState(getModule(initialModule)?.level || 'ug');
