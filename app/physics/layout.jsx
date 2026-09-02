@@ -6,6 +6,11 @@ export const metadata = {
   description: '高校の基礎から博士レベルまで、物理学を体系的に学ぶ。量子系の理解と活用に重点を置いた学習環境。',
 };
 
+// 物理アプリはダークテーマなので、モバイルのブラウザUIの色も上書きする
+export const viewport = {
+  themeColor: '#080a12',
+};
+
 export default function PhysicsLayout({ children }) {
   return (
     <div className="min-h-[100dvh] bg-vacuum text-qink antialiased phys-dark">
