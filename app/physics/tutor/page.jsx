@@ -155,6 +155,7 @@ function TutorInner() {
         `「${mod.title}」の要点を、いまのレベルに合わせて説明して`,
         ...(mod.goals || []).slice(0, 2).map((g) => `${g}——これができるように教えて`),
         `${mod.title} でよくある誤解を教えて`,
+        ...(mod.intuition ? [`「イメージでつかむ」のたとえは、どこで正確でなくなる？`] : []),
       ]
     : GENERIC_STARTERS;
 

@@ -35,7 +35,7 @@ function CurriculumInner() {
     return MODULES.filter((m) => {
       if (level !== 'all' && m.level !== level) return false;
       if (track !== 'all' && m.track !== track) return false;
-      if (q && ![m.title, m.summary, ...(m.keywords || [])].join(' ').toLowerCase().includes(q)) return false;
+      if (q && ![m.title, m.summary, m.intuition || '', ...(m.keywords || [])].join(' ').toLowerCase().includes(q)) return false;
       return true;
     });
   }, [level, track, query]);

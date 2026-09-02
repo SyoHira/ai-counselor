@@ -267,6 +267,19 @@ test('カリキュラム: 全単元にイメージでの説明がある', () => 
   }
 });
 
+test('チューター/演習プロンプト: 単元のイメージ説明が渡される', async () => {
+  const { buildSystemPrompt, buildProblemPrompt } = await import('../lib/physics/tutorPrompt.js');
+  const m = MODULES.find((x) => x.id === 'qm-ug-04');
+  const sys = buildSystemPrompt({ level: 'ug', mode: 'derive', module: m });
+  assert.ok(sys.includes(m.intuition), 'system prompt に intuition が無い');
+  assert.ok(sys.includes('どこで破れるか'), '比喩の限界を補う指示が無い');
+  const prob = buildProblemPrompt({ level: 'ug', module: m });
+  assert.ok(prob.includes(m.intuition), 'problem prompt に intuition が無い');
+  // 単元なしでは壊れない
+  assert.ok(buildSystemPrompt({ level: 'hs' }).length > 100);
+  assert.ok(!buildProblemPrompt({ level: 'hs' }).includes('イメージ'));
+});
+
 // ── 物理数学ビジュアライザの計算 ──────────────────────
 test('ベクトル場: 数値微分の発散・回転が解析値と一致する', async () => {
   const { VECTOR_FIELDS, divCurlNumeric } = await import('../lib/physics/mathviz.js');
