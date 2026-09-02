@@ -223,7 +223,7 @@ test('カリキュラム: IDに埋め込んだ段階と level が一致する', 
 });
 
 test('カリキュラム: ラボの紐付けが実在するラボを指す', () => {
-  const known = new Set(['circuit', 'bloch', 'well', 'tunnel']);
+  const known = new Set(['circuit', 'bloch', 'well', 'tunnel', 'math']);
   for (const m of MODULES) {
     for (const l of m.labs || []) assert.ok(known.has(l), `${m.id} が未知のラボ ${l} を指している`);
   }
@@ -246,4 +246,100 @@ test('カリキュラム: 高校で主要分野が網羅されている', () => 
   }
   assert.ok(byTrack.mech >= 8, `力学が ${byTrack.mech} 単元しかない`);
   assert.ok(byTrack.em >= 6, `電磁気が ${byTrack.em} 単元しかない`);
+});
+
+test('カリキュラム: 物理数学が4段階すべてに用意されている', () => {
+  const math = MODULES.filter((m) => m.track === 'math');
+  const byLevel = {};
+  for (const m of math) byLevel[m.level] = (byLevel[m.level] || 0) + 1;
+  for (const lv of ['hs', 'ug', 'grad', 'phd']) {
+    assert.ok(byLevel[lv] >= 2, `${lv} の物理数学が ${byLevel[lv] || 0} 単元しかない`);
+  }
+  assert.ok(math.length >= 20, `物理数学が ${math.length} 単元`);
+});
+
+test('カリキュラム: 物理数学の全単元にイメージでの説明がある', () => {
+  for (const m of MODULES.filter((x) => x.track === 'math')) {
+    assert.ok(typeof m.intuition === 'string' && m.intuition.length >= 40, `${m.id} に intuition がない`);
+  }
+});
+
+// ── 物理数学ビジュアライザの計算 ──────────────────────
+test('ベクトル場: 数値微分の発散・回転が解析値と一致する', async () => {
+  const { VECTOR_FIELDS, divCurlNumeric } = await import('../lib/physics/mathviz.js');
+  for (const [name, f] of Object.entries(VECTOR_FIELDS)) {
+    for (const [x, y] of [[0.7, -0.4], [1.3, 0.9], [-0.5, 1.1]]) {
+      const { div, curl } = divCurlNumeric(f.fn, x, y);
+      close(div, f.div(), 2e-3, `${name} の発散 at (${x},${y})`);
+      close(curl, f.curl(), 2e-3, `${name} の回転 at (${x},${y})`);
+    }
+  }
+});
+
+test('2次元のクーロン場: 流束は半径によらず 2π（Gaussの法則）', async () => {
+  const { VECTOR_FIELDS } = await import('../lib/physics/mathviz.js');
+  const f = VECTOR_FIELDS.coulomb2d.fn;
+  for (const R of [0.4, 1, 2.5]) {
+    let flux = 0;
+    const N = 4000;
+    for (let i = 0; i < N; i++) {
+      const t = (2 * Math.PI * i) / N;
+      const [u, v] = f(R * Math.cos(t), R * Math.sin(t));
+      flux += (u * Math.cos(t) + v * Math.sin(t)) * R * ((2 * Math.PI) / N);
+    }
+    close(flux, 2 * Math.PI, 1e-6, `半径 ${R} の流束`);
+  }
+});
+
+test('フーリエ級数: 項を増やすと誤差が単調に減る', async () => {
+  const { WAVEFORMS, fourierError, fourierPartialSum } = await import('../lib/physics/mathviz.js');
+  for (const w of Object.values(WAVEFORMS)) {
+    let prev = Infinity;
+    for (const N of [1, 3, 5, 11, 25, 51]) {
+      const e = fourierError(w, N);
+      assert.ok(e < prev, `${w.label}: N=${N} で誤差が増えた`);
+      prev = e;
+    }
+  }
+  // Gibbs現象：行き過ぎは「跳びの高さ」の約8.95%。この波は跳びが2なので peak ≈ 1 + 0.0895*2 ≈ 1.179
+  const peak = Math.max(...Array.from({ length: 800 }, (_, i) =>
+    fourierPartialSum(WAVEFORMS.square, 0.001 + (i * 0.4) / 800, 101)));
+  const overshoot = (peak - 1) / 2; // 跳び（=2）に対する割合
+  assert.ok(overshoot > 0.085 && overshoot < 0.095, `Gibbsの行き過ぎ ${(overshoot * 100).toFixed(2)}% (peak=${peak.toFixed(4)})`);
+});
+
+test('2×2行列の固有値・固有ベクトル', async () => {
+  const { eigen2x2 } = await import('../lib/physics/mathviz.js');
+  const sym = eigen2x2(2, 1, 1, 2);
+  assert.ok(sym.real);
+  close(sym.values[0], 3, 1e-12, '対称行列の固有値');
+  close(sym.values[1], 1, 1e-12, '対称行列の固有値');
+  // 固有ベクトルは直交する（実対称行列）
+  const [v1, v2] = sym.vectors;
+  close(v1[0] * v2[0] + v1[1] * v2[1], 0, 1e-9, '固有ベクトルの直交性');
+  // Av = λv を直接確かめる
+  for (let i = 0; i < 2; i++) {
+    const v = sym.vectors[i];
+    const l = sym.values[i];
+    close(2 * v[0] + 1 * v[1], l * v[0], 1e-9, 'Av=λv の第1成分');
+    close(1 * v[0] + 2 * v[1], l * v[1], 1e-9, 'Av=λv の第2成分');
+  }
+  // 回転行列は実の固有方向を持たない
+  const rot = eigen2x2(0, -1, 1, 0);
+  assert.equal(rot.real, false);
+  close(rot.trace, 0, 1e-12, 'トレース');
+  close(rot.det, 1, 1e-12, '行列式');
+});
+
+test('テイラー展開: 次数を上げると近似が良くなり、収束半径の外では壊れる', async () => {
+  const { TAYLOR_TARGETS, taylorPartialSum } = await import('../lib/physics/mathviz.js');
+  const sin = TAYLOR_TARGETS.sin;
+  close(taylorPartialSum(sin, 1.0, 15), Math.sin(1.0), 1e-12, 'sin の高次近似');
+  assert.ok(
+    Math.abs(taylorPartialSum(sin, 1.0, 1) - Math.sin(1)) > Math.abs(taylorPartialSum(sin, 1.0, 5) - Math.sin(1)),
+    '次数を上げると誤差が減る'
+  );
+  const geom = TAYLOR_TARGETS.geom;
+  close(taylorPartialSum(geom, 0.5, 40), 2, 1e-9, '収束半径の内側では正しい値へ');
+  assert.ok(Math.abs(taylorPartialSum(geom, 1.5, 40)) > 1e6, '収束半径の外側では発散する');
 });

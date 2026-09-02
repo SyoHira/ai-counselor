@@ -8,6 +8,7 @@ import { Card, SectionTitle, Meter, Ring, Badge, LinkButton, levelTone } from '@
 import ModuleCard from '@/components/physics/ModuleCard';
 
 const LABS = [
+  { href: '/physics/lab/math', title: '物理数学ビジュアライザ', desc: '発散・回転・フーリエ・複素写像・固有ベクトルを絵で掴む', icon: '∫' },
   { href: '/physics/lab/circuit', title: '量子回路シミュレータ', desc: '最大6量子ビット。状態ベクトル・確率・エンタングルメントを逐次表示', icon: '⊗' },
   { href: '/physics/lab/bloch', title: 'Bloch球と1量子ビット', desc: 'ゲートを回転として見る。測定・デコヒーレンスも扱う', icon: '◉' },
   { href: '/physics/lab/well', title: '固有状態ソルバ', desc: '6種類のポテンシャルの有限区間の固有状態を数値計算する', icon: '∿' },

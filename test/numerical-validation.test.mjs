@@ -10,7 +10,7 @@ const close = (a, b, tolerance) => assert.ok(Math.abs(a - b) < tolerance, `${a} 
 test('all curriculum equations render and track/lab references resolve', () => {
   for (const m of MODULES) {
     assert.ok(TRACKS.some(t => t.id === m.track), m.id);
-    for (const lab of m.labs || []) assert.ok(['circuit', 'bloch', 'well', 'tunnel'].includes(lab), m.id);
+    for (const lab of m.labs || []) assert.ok(['circuit', 'bloch', 'well', 'tunnel', 'math'].includes(lab), m.id);
     for (const { tex } of m.equations || []) assert.doesNotThrow(() => katex.renderToString(tex, { throwOnError: true, trust: false, strict: 'ignore' }), m.id);
   }
 });

@@ -7,6 +7,15 @@ import Tex from '@/components/physics/Tex';
 
 const LABS = [
   {
+    id: 'math',
+    href: '/physics/lab/math',
+    icon: '∫',
+    title: '物理数学ビジュアライザ',
+    lead: '発散・回転・フーリエ級数・複素写像・固有ベクトル・テイラー展開を、動かして絵として掴みます。記号の操作ではなく「その式が何をしている絵なのか」を先に持つための場所です。',
+    can: ['ベクトル場の発散と回転を背景の色で見比べる', '項を増やすとフーリエ級数が波に近づく様子とGibbs現象', '複素写像で直交格子が歪んでも直角が保たれること（等角性）', '行列が単位円を楕円に変え、固有方向だけ向きが変わらないこと'],
+    math: '\\nabla\\cdot\\mathbf{F},\\quad \\nabla\\times\\mathbf{F},\\quad f(x)=\\sum_n b_n\\sin nx,\\quad A\\mathbf{v}=\\lambda\\mathbf{v}',
+  },
+  {
     id: 'circuit',
     href: '/physics/lab/circuit',
     icon: '⊗',
@@ -60,7 +69,7 @@ export default function LabHub() {
         {LABS.map((lab) => {
           const related = MODULES.filter((m) => (m.labs || []).includes(lab.id));
           return (
-            <Card key={lab.id} className="p-5 flex flex-col">
+            <Card key={lab.id} className="p-5 flex flex-col min-w-0">
               <Link href={lab.href} className="group">
                 <div className="flex items-center gap-3 mb-2.5">
                   <span className="w-10 h-10 rounded-xl bg-quantum/12 text-quantum flex items-center justify-center text-[18px] shrink-0">

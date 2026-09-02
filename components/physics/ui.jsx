@@ -5,7 +5,7 @@ import Link from 'next/link';
 export function Card({ children, className = '', as: Tag = 'div', ...rest }) {
   return (
     <Tag
-      className={`rounded-2xl bg-panel/70 border border-edge/80 ${className}`}
+      className={`rounded-2xl bg-panel/70 border border-edge/80 min-w-0 ${className}`}
       {...rest}
     >
       {children}

@@ -12,6 +12,7 @@ const LAB_INFO = {
   circuit: { href: '/physics/lab/circuit', label: '量子回路シミュレータ' },
   bloch: { href: '/physics/lab/bloch', label: 'Bloch球ラボ' },
   well: { href: '/physics/lab/well', label: '固有状態ソルバ' },
+  math: { href: '/physics/lab/math', label: '物理数学ビジュアライザ' },
   tunnel: { href: '/physics/lab/tunnel', label: '波束トンネル' },
 };
 
@@ -60,6 +61,13 @@ export default function ModulePage({ params }) {
           <LinkButton key={l} href={LAB_INFO[l].href}>{LAB_INFO[l].label}</LinkButton>
         ))}
       </div>
+
+      {mod.intuition && (
+        <Card className="p-4 border-photon/30 bg-photon/[0.04]">
+          <SectionTitle sub="式の前に、まず絵で掴む">イメージでつかむ</SectionTitle>
+          <p className="text-[13px] leading-[1.9] text-qink">{mod.intuition}</p>
+        </Card>
+      )}
 
       <Card className="p-4">
         <SectionTitle sub="この単元を終えたときにできるようになること">到達目標</SectionTitle>

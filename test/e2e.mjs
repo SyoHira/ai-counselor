@@ -103,7 +103,9 @@ txt = (await page.textContent('body')).replace(/\s+/g, ' ');
 check('進捗: localStorageに保存されホームへ反映', txt.includes(`習得 1 / ${STATS.total}`));
 
 await page.goto(BASE + '/physics/lab', { waitUntil: 'networkidle' });
-check('ラボ一覧: 4つのラボへの入口', await page.getByRole('link', { name: '開く', exact: true }).count() === 4);
+const labIds = new Set(MODULES.flatMap((m) => m.labs || []));
+const labLinks = await page.getByRole('link', { name: '開く', exact: true }).count();
+check('ラボ一覧: 単元から参照される全ラボに入口がある', labLinks >= labIds.size, `入口 ${labLinks} 件 / 参照 ${labIds.size} 種`);
 
 // ── 回路ラボ
 await page.goto(BASE + '/physics/lab/circuit', { waitUntil: 'networkidle' });
@@ -168,6 +170,35 @@ check('トンネル: 透過率が理論値近傍（4〜7%）', T > 3.5 && T < 7,
 check('トンネル: 規格化が保存される', Math.abs(parseFloat(norm) - 1) < 1e-5, norm);
 check('トンネル: 自動停止後は再実行を禁止する', await page.getByRole('button', { name: '実行', exact: true }).isDisabled());
 await page.screenshot({ path: `${SHOTS}/v-tunnel.png` });
+
+// ── 物理数学ビジュアライザ
+await page.goto(BASE + '/physics/lab/math', { waitUntil: 'networkidle' });
+await page.waitForTimeout(500);
+let mtxt = await page.textContent('body');
+check('数学ラボ: 既定でベクトル場が出る', mtxt.includes('放射状') && mtxt.includes('∇·F ='));
+check('数学ラボ: 矢印が描かれている', (await page.locator('svg line').count()) > 100,
+  `${await page.locator('svg line').count()} 本`);
+await page.getByRole('button', { name: '2次元のクーロン場' }).click();
+await page.waitForTimeout(500);
+mtxt = await page.textContent('body');
+check('数学ラボ: Gaussの法則の説明が出る', mtxt.includes('半径を変えても変わりません'));
+await page.getByRole('button', { name: 'フーリエ級数' }).click();
+await page.waitForTimeout(500);
+const errBefore = parseFloat((await page.textContent('body')).match(/二乗平均誤差\s*([\d.]+)/)[1]);
+await page.locator('input[type=range]').first().fill('40');
+await page.waitForTimeout(500);
+const errAfter = parseFloat((await page.textContent('body')).match(/二乗平均誤差\s*([\d.]+)/)[1]);
+check('数学ラボ: 項数を増やすと誤差が減る', errAfter < errBefore, `${errBefore} → ${errAfter}`);
+await page.getByRole('button', { name: '複素写像' }).click();
+await page.waitForTimeout(400);
+check('数学ラボ: 複素写像の格子が描かれる', (await page.locator('svg path').count()) > 15);
+await page.getByRole('button', { name: '固有ベクトル' }).click();
+await page.waitForTimeout(400);
+mtxt = await page.textContent('body');
+check('数学ラボ: 固有値が表示される', /固有値 λ₁ = /.test(mtxt) || mtxt.includes('複素数'));
+await page.getByRole('button', { name: 'テイラー展開' }).click();
+await page.waitForTimeout(400);
+check('数学ラボ: テイラー展開が描かれる', (await page.textContent('body')).includes('収束半径'));
 
 // ── チューター・演習（APIキー無しでもUIが壊れないこと）
 await page.goto(BASE + '/physics/tutor', { waitUntil: 'networkidle' });
@@ -275,7 +306,7 @@ await page.screenshot({ path: `${SHOTS}/v-measurement.png` });
 // ── モバイル幅で崩れないか
 const mob = await ctx.newPage();
 await mob.setViewportSize({ width: 390, height: 844 });
-for (const p of ['/physics', '/physics/curriculum', '/physics/module/qm-ug-02', '/physics/lab', '/physics/lab/circuit', '/physics/lab/bloch', '/physics/lab/well', '/physics/lab/tunnel', '/physics/tutor', '/physics/practice']) {
+for (const p of ['/physics', '/physics/curriculum', '/physics/module/qm-ug-02', '/physics/lab', '/physics/lab/circuit', '/physics/lab/bloch', '/physics/lab/well', '/physics/lab/tunnel', '/physics/lab/math', '/physics/tutor', '/physics/practice']) {
   await mob.goto(BASE + p, { waitUntil: 'networkidle' });
   await mob.waitForTimeout(500);
   const overflow = await mob.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
