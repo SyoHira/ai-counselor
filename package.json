@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "test": "node --test test/*.test.mjs",
-    "test:e2e": "node test/e2e.mjs"
+    "test:e2e": "node test/run-e2e.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
@@ -18,5 +18,11 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwindcss": "^3.4.19"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

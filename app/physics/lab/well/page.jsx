@@ -30,7 +30,8 @@ export default function WellLab() {
   const [showDensity, setShowDensity] = useState(false);
   const [selected, setSelected] = useState(null);
 
-  const deferred = useDeferredValue({ kind, params, count });
+  const solverInput = useMemo(() => ({ kind, params, count }), [kind, params, count]);
+  const deferred = useDeferredValue(solverInput);
   const def = POTENTIALS[deferred.kind];
 
   const result = useMemo(() => {
@@ -93,7 +94,8 @@ export default function WellLab() {
         <h1 className="text-[19px] font-semibold tracking-tight">固有状態ソルバ</h1>
         <p className="text-[12px] text-qmute mt-1 leading-relaxed">
           定常シュレーディンガー方程式 <Tex>{'-\\frac{\\hbar^2}{2m}\\psi\'\'+V(x)\\psi=E\\psi'}</Tex> を
-          有限差分で三重対角化し、implicit-shift QL 法で厳密対角化します（<Tex>{'\\hbar=m=1'}</Tex>、格子点 {N_GRID}）。
+          有限差分で三重対角化し、implicit-shift QL 法で数値対角化します（<Tex>{'\\hbar=m=1'}</Tex>、格子点 {N_GRID}）。
+          全ポテンシャルで表示区間の両端を無限壁とします。Morseの E ≥ D は箱で離散化された状態で、自由空間の束縛状態ではありません。
         </p>
       </div>
 

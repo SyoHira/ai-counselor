@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { LEVELS, MODULES, getModule } from '@/lib/physics/curriculum';
@@ -30,6 +30,14 @@ function PracticeInner() {
   const [grading, setGrading] = useState('');
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(null);
+  const requestRef = useRef(null);
+  const busy = loading || Boolean(grading);
+
+  useEffect(() => () => { requestRef.current?.abort(); requestRef.current = null; }, []);
+
+  const clearProblems = () => {
+    setProblems([]); setAnswers({}); setResults({}); setRevealed({}); setHinted({}); setError('');
+  };
 
   const mod = moduleId ? getModule(moduleId) : null;
 
@@ -37,10 +45,13 @@ function PracticeInner() {
     if (mod) {
       setLevel(mod.level);
       setProgress(getModuleProgress(mod.id));
-    }
+    } else setProgress(null);
   }, [mod]);
 
   const generate = async () => {
+    if (requestRef.current) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
     setLoading(true);
     setError('');
     setProblems([]);
@@ -52,28 +63,34 @@ function PracticeInner() {
       const res = await fetch('/api/physics-problem', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({ action: 'generate', moduleId, level, difficulty, count: 3 }),
       });
       const data = await res.json();
+      if (requestRef.current !== controller) return;
       if (!res.ok) throw new Error(data.message || `エラー (${res.status})`);
       setProblems(data.problems || []);
       logSession({ type: 'practice', moduleId: moduleId || null, level, difficulty });
     } catch (e) {
-      setError(e.message || '問題の生成に失敗しました。');
+      if (requestRef.current === controller && e.name !== 'AbortError') setError(e.message || '問題の生成に失敗しました。');
     } finally {
-      setLoading(false);
+      if (requestRef.current === controller) { requestRef.current = null; setLoading(false); }
     }
   };
 
   const grade = async (p) => {
+    if (requestRef.current || results[p.id]) return;
     const userAnswer = (answers[p.id] || '').trim();
     if (!userAnswer) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
     setGrading(p.id);
     setError('');
     try {
       const res = await fetch('/api/physics-problem', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           action: 'grade',
           question: p.question,
@@ -84,17 +101,18 @@ function PracticeInner() {
         }),
       });
       const data = await res.json();
+      if (requestRef.current !== controller) return;
       if (!res.ok) throw new Error(data.message || `エラー (${res.status})`);
       setResults((r) => ({ ...r, [p.id]: data }));
       setRevealed((r) => ({ ...r, [p.id]: true }));
-      if (moduleId) {
+      if (moduleId && !revealed[p.id]) {
         recordAttempt(moduleId, data.correct);
         setProgress(getModuleProgress(moduleId));
       }
     } catch (e) {
-      setError(e.message || '採点に失敗しました。');
+      if (requestRef.current === controller && e.name !== 'AbortError') setError(e.message || '採点に失敗しました。');
     } finally {
-      setGrading('');
+      if (requestRef.current === controller) { requestRef.current = null; setGrading(''); }
     }
   };
 
@@ -113,7 +131,9 @@ function PracticeInner() {
           <p className="text-[11px] text-qmute mb-1.5">単元（未選択なら分野横断の総合問題）</p>
           <select
             value={moduleId}
-            onChange={(e) => setModuleId(e.target.value)}
+            aria-label="単元"
+            disabled={busy}
+            onChange={(e) => { clearProblems(); setModuleId(e.target.value); }}
             className="w-full rounded-xl bg-panel border border-edge px-3 py-2 text-[12px] focus:border-quantum/60 focus:outline-none"
           >
             <option value="">— 単元を指定しない —</option>
@@ -131,7 +151,8 @@ function PracticeInner() {
           {LEVELS.map((l) => (
             <button
               key={l.id}
-              onClick={() => setLevel(l.id)}
+              disabled={busy}
+              onClick={() => { clearProblems(); setLevel(l.id); }}
               className={`px-2.5 py-1 rounded-lg text-[11.5px] border transition-colors ${
                 level === l.id ? 'bg-quantum/15 text-quantum border-quantum/40' : 'bg-panel border-edge text-qmute hover:border-quantum/40'
               }`}
@@ -145,7 +166,8 @@ function PracticeInner() {
           {DIFFICULTIES.map((d) => (
             <button
               key={d.id}
-              onClick={() => setDifficulty(d.id)}
+              disabled={busy}
+              onClick={() => { clearProblems(); setDifficulty(d.id); }}
               title={d.hint}
               className={`px-2.5 py-1 rounded-lg text-[11.5px] border transition-colors ${
                 difficulty === d.id ? 'bg-photon/15 text-photon border-photon/40' : 'bg-panel border-edge text-qmute hover:border-photon/40'
@@ -157,7 +179,7 @@ function PracticeInner() {
         </div>
 
         <div className="flex items-center gap-3 pt-1">
-          <Button variant="primary" onClick={generate} disabled={loading}>
+          <Button variant="primary" onClick={generate} disabled={busy}>
             {loading ? '生成中…' : '問題を作る（3問）'}
           </Button>
           {mod && (
@@ -215,6 +237,7 @@ function PracticeInner() {
                 value={answers[p.id] || ''}
                 onChange={(e) => setAnswers((a) => ({ ...a, [p.id]: e.target.value }))}
                 disabled={Boolean(result)}
+                maxLength={4000}
                 rows={4}
                 placeholder="考え方も含めて書いてください（式は $...$ で書けます）"
                 className="w-full rounded-xl bg-vacuum/50 border border-edge px-3 py-2.5 text-[12.5px] placeholder:text-qmute/50 focus:border-quantum/60 focus:outline-none disabled:opacity-70"
@@ -225,7 +248,7 @@ function PracticeInner() {
               <Button
                 variant="primary"
                 onClick={() => grade(p)}
-                disabled={!answers[p.id] || Boolean(result) || grading === p.id}
+                disabled={!answers[p.id]?.trim() || Boolean(result) || busy}
               >
                 {grading === p.id ? '採点中…' : '採点する'}
               </Button>
@@ -260,6 +283,7 @@ function PracticeInner() {
 
             {revealed[p.id] && (
               <div className="rounded-xl border border-edge/70 bg-vacuum/40 px-3 py-3 space-y-2">
+                {!result && <p className="text-[11px] text-qmute">解答を見た問題は、添削できますが習得判定には加算しません。</p>}
                 <p className="text-[10.5px] text-photon">模範解答</p>
                 <RichText text={p.answer} className="text-[12.5px]" />
                 {p.explanation && (

@@ -10,7 +10,7 @@ import ModuleCard from '@/components/physics/ModuleCard';
 const LABS = [
   { href: '/physics/lab/circuit', title: '量子回路シミュレータ', desc: '最大6量子ビット。状態ベクトル・確率・エンタングルメントを逐次表示', icon: '⊗' },
   { href: '/physics/lab/bloch', title: 'Bloch球と1量子ビット', desc: 'ゲートを回転として見る。測定・デコヒーレンスも扱う', icon: '◉' },
-  { href: '/physics/lab/well', title: '固有状態ソルバ', desc: '任意ポテンシャルの束縛状態を数値対角化で求める', icon: '∿' },
+  { href: '/physics/lab/well', title: '固有状態ソルバ', desc: '6種類のポテンシャルの有限区間の固有状態を数値計算する', icon: '∿' },
   { href: '/physics/lab/tunnel', title: '波束トンネル', desc: 'split-operator法で時間発展。透過率を実測する', icon: '⇢' },
 ];
 

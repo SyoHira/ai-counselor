@@ -290,15 +290,17 @@ export default function CircuitLab() {
           <SectionTitle sub="現在のステップにおける各基底状態の観測確率">測定確率</SectionTitle>
           <ProbBars entries={probEntries} />
           <div className="mt-4 pt-3 border-t border-edge/60">
-            <p className="text-[11px] text-qmute mb-1.5">状態ベクトル（q0 が左端）</p>
+            <p className="text-[11px] text-qmute mb-1.5">量子状態（q0 が左端）</p>
             <p className="font-mono text-[11px] text-photon break-all leading-relaxed">
-              |ψ⟩ = {ketString(stateAtStep)}
+              {stateAtStep.isDensityMatrix
+                ? `測定結果を平均した密度行列 ρ ／ 純度 Tr ρ² = ${stateAtStep.purity().toFixed(3)}`
+                : `|ψ⟩ = ${ketString(stateAtStep)}`}
             </p>
           </div>
         </Card>
 
         <Card className="p-4">
-          <SectionTitle sub="縮約状態。長さが1未満なら他のビットとエンタングルしている">各量子ビットのBloch表示</SectionTitle>
+          <SectionTitle sub={view.mixed ? '測定後の混合状態。長さだけではエンタングルメントを判定できません' : '全体が純粋状態のとき、長さが1未満なら他のビットとエンタングルしています'}>各量子ビットのBloch表示</SectionTitle>
           <div className="flex flex-wrap gap-2 justify-center">
             {view.bloch.map((b, q) => (
               <div key={q} className="text-center">
@@ -312,8 +314,8 @@ export default function CircuitLab() {
             ))}
           </div>
           <p className="text-[11px] text-qmute mt-3 leading-relaxed">
-            エンタングルメント・エントロピー合計 <span className="text-photon tabular-nums">{totalEntropy.toFixed(3)}</span> bit。
-            0 なら各ビットは独立（積状態）、1 に近いほどそのビットは他と強く絡んでいます。
+            単一量子ビットの縮約エントロピー合計 <span className="text-photon tabular-nums">{totalEntropy.toFixed(3)}</span> bit。
+            全体が純粋状態のとき、各ビットの S は残りとのエンタングルメントを表します。合計は独立したエンタングルメント尺度ではありません。
           </p>
         </Card>
       </div>
@@ -326,7 +328,8 @@ export default function CircuitLab() {
           <ProbBars entries={shots.entries} color="from-photon to-quantum" />
           <p className="text-[11px] text-qmute mt-3">
             回路に測定演算があれば途中測定として実際に状態を収縮させ、無ければ最後に全ビットを測定します。
-            理論確率とのずれは統計誤差（1024ショットなら約 ±1.5%）です。
+            表示は各対象ビットの最後の測定結果です。上の確率は選択ステップの量子状態なので、測定後にもゲートがある場合は直接比較できません。
+            1024ショットの標準誤差は最大約1.6パーセントポイントです。
           </p>
         </Card>
       )}

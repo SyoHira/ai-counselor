@@ -1,30 +1,40 @@
-// ブラウザ実機での通しテスト。
-//
-//   npm i -D playwright        # 初回のみ（ブラウザは PLAYWRIGHT_BROWSERS_PATH か既定の場所から探す）
-//   npm run build && npm start # 別ターミナルでアプリを起動
-//   npm run test:e2e           # 実行（BASE_URL / CHROME_PATH で上書き可）
-//
-// APIキーが未設定でも通るように書いてある（チューターと演習はエラー表示を確認する）。
-
+// Production browser checks. Run with npm run test:e2e after npm run build.
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
+const waitForFixture = async predicate => {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Fixture request did not arrive');
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+};
 const SHOTS = process.env.SHOT_DIR || 'test/screenshots';
 mkdirSync(SHOTS, { recursive: true });
 
 const browser = await chromium.launch(
   process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}
 );
+try {
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 950 } });
+await ctx.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
 const page = await ctx.newPage();
 const errs = [];
 page.on('pageerror', e => errs.push(`PAGEERROR ${page.url()} :: ${e.message}`));
 page.on('console', m => {
   if (m.type() !== 'error') return;
   const t = m.text();
-  if (t.includes('ERR_CONNECTION_RESET') || t.includes('404')) return; // 外部フォント（サンドボックスでは遮断）
+  if (t.startsWith('Failed to load resource:')) return; // HTTP failures checked with their exact URL below
   errs.push(`CONSOLE ${page.url()} :: ${t.slice(0, 180)}`);
+});
+
+page.on('response', response => {
+  const url = new URL(response.url());
+  if (url.origin !== new URL(BASE).origin || response.status() < 400) return;
+  if (url.pathname === '/favicon.ico' && response.status() === 404) return;
+  if (['/api/physics-tutor', '/api/physics-problem'].includes(url.pathname) && response.status() === 503) return;
+  errs.push(`HTTP ${response.status()} ${url.pathname}`);
 });
 
 const results = [];
@@ -36,8 +46,8 @@ const check = (name, cond, detail = '') => {
 // ── 既存アプリ（root layout を触ったので回帰確認）
 await page.goto(BASE + '/', { waitUntil: 'networkidle' });
 let txt = await page.textContent('body');
-check('既存: カウンセラーのホームが表示される', txt.includes('Andon') && txt.includes('What’s on your mind?') || txt.includes('Andon'));
-check('既存: トピックバーが8件', (await page.locator('button', { hasText: '' }).count()) > 0);
+check('既存: カウンセラーのホームが表示される', txt.includes('Andon') && txt.includes("What's on your mind?"));
+check('既存: トピックバーが8件', (await page.locator('button .stories-ring').count()) === 8);
 const vp = await page.getAttribute('meta[name="viewport"]', 'content');
 check('既存: viewport メタタグが出力されている', /width=device-width/.test(vp || ''), vp || 'なし');
 const theme = await page.getAttribute('meta[name="theme-color"]', 'content');
@@ -60,7 +70,7 @@ await page.goto(BASE + '/physics/curriculum', { waitUntil: 'networkidle' });
 const all = await page.locator('a[href^="/physics/module/"]').count();
 check('カリキュラム: 全単元が並ぶ', all === 114, `${all} 件`);
 await page.getByRole('button', { name: /量子情報・量子計算/ }).click();
-await page.waitForTimeout(400);
+await page.waitForFunction(() => document.querySelectorAll('a[href^="/physics/module/"]').length === 18);
 const qinfo = await page.locator('a[href^="/physics/module/"]').count();
 check('カリキュラム: 量子情報で18件に絞れる', qinfo === 18, `${qinfo} 件`);
 await page.fill('input[placeholder*="キーワード"]', 'Grover');
@@ -79,6 +89,9 @@ await page.waitForTimeout(400);
 txt = (await page.textContent('body')).replace(/\s+/g, ' ');
 check('進捗: localStorageに保存されホームへ反映', /習得 1 \/ 114/.test(txt));
 
+await page.goto(BASE + '/physics/lab', { waitUntil: 'networkidle' });
+check('ラボ一覧: 4つのラボへの入口', await page.getByRole('link', { name: '開く', exact: true }).count() === 4);
+
 // ── 回路ラボ
 await page.goto(BASE + '/physics/lab/circuit', { waitUntil: 'networkidle' });
 await page.getByRole('button', { name: /Grover探索（3量子ビット/ }).click();
@@ -89,7 +102,7 @@ check('回路: Grover3量子ビットで|101⟩が約94.5%', m101 && Math.abs(pa
 await page.getByRole('button', { name: /Bellペア/ }).click();
 await page.waitForTimeout(500);
 txt = await page.textContent('body');
-check('回路: Bellでエントロピー合計が2 bit', /エンタングルメント・エントロピー合計\s*2\.000/.test(txt.replace(/\s+/g,' ')));
+check('回路: Bellでエントロピー合計が2 bit', /単一量子ビットの縮約エントロピー合計\s*2\.000/.test(txt.replace(/\s+/g,' ')));
 await page.getByRole('button', { name: '1024ショット測定' }).click();
 await page.waitForTimeout(800);
 check('回路: ショット測定が動く', (await page.textContent('body')).includes('サンプリング結果'));
@@ -134,13 +147,13 @@ await page.screenshot({ path: `${SHOTS}/v-well.png` });
 // ── 波束トンネル
 await page.goto(BASE + '/physics/lab/tunnel', { waitUntil: 'networkidle' });
 await page.getByRole('button', { name: '実行' }).click();
-await page.waitForTimeout(9000);
+await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent === '実行' && b.disabled), { timeout: 30000 });
 txt = await page.textContent('body');
 const T = parseFloat((txt.match(/波束の実測透過率\s*([\d.]+)%/) || [])[1]);
 const norm = (txt.match(/∫\|ψ\|²dx = ([\d.]+)/) || [])[1];
 check('トンネル: 透過率が理論値近傍（4〜7%）', T > 3.5 && T < 7, T + '%');
 check('トンネル: 規格化が保存される', Math.abs(parseFloat(norm) - 1) < 1e-5, norm);
-check('トンネル: 自動停止する', /t = 2[01]\.\d/.test(txt), (txt.match(/t = ([\d.]+)/)||[])[1]);
+check('トンネル: 自動停止後は再実行を禁止する', await page.getByRole('button', { name: '実行', exact: true }).isDisabled());
 await page.screenshot({ path: `${SHOTS}/v-tunnel.png` });
 
 // ── チューター・演習（APIキー無しでもUIが壊れないこと）
@@ -156,10 +169,100 @@ await page.getByRole('button', { name: /問題を作る/ }).click();
 await page.waitForTimeout(2500);
 check('演習: APIキー無しでエラーを日本語表示', (await page.textContent('body')).includes('ANTHROPIC_API_KEY'));
 
+// Successful AI flows use deterministic browser fixtures; no live model is called.
+let gradeCalls = 0;
+let releaseGrade;
+await page.route('**/api/physics-problem', async route => {
+  const body = route.request().postDataJSON();
+  if (body.action === 'generate') {
+    await route.fulfill({ json: { problems: [{ id: 'p1', type: 'short', question: '回帰テスト問題', choices: [], answer: '2', explanation: '解説', hint: 'ヒント' }] } });
+  } else {
+    gradeCalls++;
+    await new Promise(resolve => { releaseGrade = resolve; });
+    await route.fulfill({ json: { correct: true, score: 100, feedback: '添削テスト完了', misconception: '' } });
+  }
+});
+await page.goto(BASE + '/physics/practice?module=qm-ug-02', { waitUntil: 'networkidle' });
+await page.getByRole('button', { name: /問題を作る/ }).click();
+await page.getByText('回帰テスト問題', { exact: true }).waitFor();
+await page.locator('textarea').fill('2');
+await page.getByRole('button', { name: '採点する', exact: true }).click();
+check('演習: 採点中の単元変更を禁止', await page.getByRole('combobox', { name: '単元' }).isDisabled());
+check('演習: 採点中の再生成を禁止', await page.getByRole('button', { name: /問題を作る/ }).isDisabled());
+await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent.includes('採点中')));
+await waitForFixture(() => releaseGrade);
+releaseGrade();
+await page.getByText('添削テスト完了', { exact: true }).waitFor();
+let saved = await page.evaluate(() => JSON.parse(localStorage.getItem('physics.progress.v1')));
+check('演習: 元の単元へ一度だけ記録', gradeCalls === 1 && saved.modules['qm-ug-02'].attempts === 1);
+await page.getByRole('combobox', { name: '単元' }).selectOption('qinfo-ug-01');
+check('演習: 単元変更で古い問題を消去', await page.getByText('回帰テスト問題', { exact: true }).count() === 0);
+check('演習: 別単元への誤記録なし', !saved.modules['qinfo-ug-01']);
+await page.getByRole('button', { name: /問題を作る/ }).click();
+await page.getByText('回帰テスト問題', { exact: true }).waitFor();
+await page.getByRole('button', { name: '解答を見る', exact: true }).click();
+await page.locator('textarea').fill('2');
+releaseGrade = null;
+await page.getByRole('button', { name: '採点する', exact: true }).click();
+await waitForFixture(() => releaseGrade);
+releaseGrade();
+await page.getByText('添削テスト完了', { exact: true }).waitFor();
+saved = await page.evaluate(() => JSON.parse(localStorage.getItem('physics.progress.v1')));
+check('演習: 解答を見た問題は習得判定に加算しない', !saved.modules['qinfo-ug-01']);
+await page.unroute('**/api/physics-problem');
+
+let tutorCalls = 0;
+let releaseTutor;
+await page.route('**/api/physics-tutor', async route => {
+  tutorCalls++;
+  if (tutorCalls === 2) await new Promise(resolve => { releaseTutor = resolve; });
+  await route.fulfill({ contentType: 'text/event-stream', body: 'data: {"text":"ストリーム回答 $x^2$"}\n\ndata: {"done":true}\n\ndata: [DONE]\n\n' }).catch(() => {});
+});
+await page.goto(BASE + '/physics/tutor', { waitUntil: 'networkidle' });
+await page.locator('textarea').fill('日本語入力の変換中');
+await page.locator('textarea').dispatchEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 229, isComposing: true, bubbles: true });
+check('チューター: 日本語の変換確定で送信しない', tutorCalls === 0 && await page.locator('textarea').inputValue() === '日本語入力の変換中');
+await page.getByRole('button', { name: '送信', exact: true }).click();
+await page.getByText('ストリーム回答', { exact: false }).waitFor();
+await page.getByRole('button', { name: '送信', exact: true }).waitFor();
+check('チューター: 回答の数式を描画', await page.locator('.katex').count() > 0);
+await page.reload({ waitUntil: 'networkidle' });
+await page.getByText('ストリーム回答', { exact: false }).waitFor();
+check('チューター: 完了した会話を再読込できる', await page.getByText('ストリーム回答', { exact: false }).count() > 0);
+await page.locator('textarea').fill('消去する会話');
+await page.getByRole('button', { name: '送信', exact: true }).click();
+await waitForFixture(() => releaseTutor);
+await page.getByRole('button', { name: '会話を消す', exact: true }).click();
+releaseTutor();
+await page.reload({ waitUntil: 'networkidle' });
+check('チューター: 消去後に遅い応答が会話を復活させない', await page.getByText('ストリーム回答', { exact: false }).count() === 0);
+await page.unroute('**/api/physics-tutor');
+
+// Invalid stored JSON shapes must not take down the application.
+await page.evaluate(() => {
+  localStorage.setItem('physics.tutor.v1', 'null');
+  localStorage.setItem('physics.progress.v1', '{"modules":{"broken":null},"sessions":42}');
+});
+await page.goto(BASE + '/physics', { waitUntil: 'networkidle' });
+check('進捗: 壊れた保存データから復帰', await page.locator('a[href^="/physics/module/"]').count() >= 2);
+await page.goto(BASE + '/physics/tutor', { waitUntil: 'networkidle' });
+check('チューター: 壊れた保存データから復帰', await page.locator('textarea').count() === 1);
+
+// A measurement between two H gates removes the interference.
+await page.goto(BASE + '/physics/lab/circuit', { waitUntil: 'networkidle' });
+await page.getByRole('button', { name: '1', exact: true }).click();
+await page.getByRole('button', { name: 'H', exact: true }).click();
+await page.getByRole('button', { name: 'ゲートを追加', exact: true }).click();
+await page.getByRole('button', { name: '測定を追加', exact: true }).click();
+await page.getByRole('button', { name: 'ゲートを追加', exact: true }).click();
+txt = await page.textContent('body');
+check('回路: H→測定→H の表示は50/50の混合状態', (txt.match(/50\.0%/g) || []).length === 2 && txt.includes('純度 Tr ρ² = 0.500'));
+await page.screenshot({ path: `${SHOTS}/v-measurement.png` });
+
 // ── モバイル幅で崩れないか
 const mob = await ctx.newPage();
 await mob.setViewportSize({ width: 390, height: 844 });
-for (const p of ['/physics', '/physics/lab/circuit', '/physics/lab/well']) {
+for (const p of ['/physics', '/physics/curriculum', '/physics/module/qm-ug-02', '/physics/lab', '/physics/lab/circuit', '/physics/lab/bloch', '/physics/lab/well', '/physics/lab/tunnel', '/physics/tutor', '/physics/practice']) {
   await mob.goto(BASE + p, { waitUntil: 'networkidle' });
   await mob.waitForTimeout(500);
   const overflow = await mob.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -167,11 +270,13 @@ for (const p of ['/physics', '/physics/lab/circuit', '/physics/lab/well']) {
 }
 await mob.screenshot({ path: `${SHOTS}/v-mobile.png` });
 
-await browser.close();
 const failed = results.filter((r) => !r.ok);
 console.log(`\n===== ${results.length - failed.length}/${results.length} PASS =====`);
 if (failed.length) console.log('FAILED:\n' + failed.map((f) => ' - ' + f.name + (f.detail ? ` (${f.detail})` : '')).join('\n'));
-// APIキー未設定を確認するテストが出す503は想定内なので除外する
-const realErrs = errs.filter((e) => !e.includes('503'));
+// Only the exact missing-key endpoint responses are excluded above.
+const realErrs = errs;
 console.log(realErrs.length ? '\n実行時エラー:\n' + realErrs.join('\n') : '\n実行時エラーなし');
-process.exit(failed.length || realErrs.length ? 1 : 0);
+process.exitCode = failed.length || realErrs.length ? 1 : 0;
+} finally {
+  await browser.close();
+}

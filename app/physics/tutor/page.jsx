@@ -8,6 +8,7 @@ import { MODES } from '@/lib/physics/tutorPrompt';
 import { logSession } from '@/lib/physics/progress';
 import { Card, Badge, levelTone } from '@/components/physics/ui';
 import RichText from '@/components/physics/RichText';
+import { readTutorStream } from '@/lib/physics/tutorStream';
 
 const STORE_KEY = 'physics.tutor.v1';
 
@@ -21,7 +22,10 @@ const GENERIC_STARTERS = [
 function loadThreads() {
   if (typeof window === 'undefined') return {};
   try {
-    return JSON.parse(window.localStorage.getItem(STORE_KEY) || '{}');
+    const data = JSON.parse(window.localStorage.getItem(STORE_KEY) || '{}');
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+    return Object.fromEntries(Object.entries(data).filter(([, messages]) => Array.isArray(messages))
+      .map(([key, messages]) => [key, messages.filter(m => m && ['user', 'assistant'].includes(m.role) && typeof m.content === 'string').slice(-24)]));
   } catch {
     return {};
   }
@@ -55,8 +59,12 @@ function TutorInner() {
   const threadKey = moduleId || 'general';
 
   useEffect(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(false); setThinking(false); setError('');
     setMessages(loadThreads()[threadKey] || []);
     if (mod) setLevel(mod.level);
+    return () => { abortRef.current?.abort(); abortRef.current = null; };
   }, [threadKey, mod]);
 
   useEffect(() => {
@@ -65,7 +73,7 @@ function TutorInner() {
 
   const send = async (text) => {
     const content = (text ?? input).trim();
-    if (!content || streaming) return;
+    if (!content || abortRef.current) return;
     setInput('');
     setError('');
     const next = [...messages, { role: 'user', content }];
@@ -80,63 +88,60 @@ function TutorInner() {
       const res = await fetch('/api/physics-tutor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next, level, mode, moduleId }),
+        body: JSON.stringify({ messages: next.filter(m => m.content.trim()).slice(-24).map(m => ({ ...m, content: m.content.slice(0, 8000) })), level, mode, moduleId }),
         signal: controller.signal,
       });
+      if (abortRef.current !== controller) return;
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.message || `エラー (${res.status})`);
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
       let acc = '';
       setMessages([...next, { role: 'assistant', content: '' }]);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const payload = line.slice(6);
-          if (payload === '[DONE]') continue;
-          let obj;
-          try { obj = JSON.parse(payload); } catch { continue; }
-          if (obj.phase === 'thinking') { setThinking(true); continue; }
-          if (obj.error) throw new Error(obj.error);
+      await readTutorStream(res.body, obj => {
+          if (abortRef.current !== controller) return;
+          if (obj.phase === 'thinking') { setThinking(true); return; }
           if (obj.text) {
             setThinking(false);
             acc += obj.text;
             setMessages([...next, { role: 'assistant', content: acc }]);
           }
-        }
-      }
+      });
+      if (abortRef.current !== controller) return;
 
       const finalMessages = [...next, { role: 'assistant', content: acc }];
       setMessages(finalMessages);
       saveThread(threadKey, finalMessages);
       logSession({ type: 'tutor', moduleId: moduleId || null, level, mode });
     } catch (e) {
-      if (e.name !== 'AbortError') {
+      if (abortRef.current === controller && e.name !== 'AbortError') {
         setError(e.message || '通信に失敗しました。');
         setMessages(next);
       }
     } finally {
-      setStreaming(false);
-      setThinking(false);
-      abortRef.current = null;
+      if (abortRef.current === controller) {
+        setStreaming(false); setThinking(false); abortRef.current = null;
+      }
     }
   };
 
   const clear = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(false); setThinking(false);
     setMessages([]);
     saveThread(threadKey, []);
     setError('');
+  };
+
+  const stop = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(false); setThinking(false);
+    setMessages(current => current.filter(message => message.role !== 'assistant' || message.content));
   };
 
   const starters = mod
@@ -250,11 +255,12 @@ function TutorInner() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                 e.preventDefault();
                 send();
               }
             }}
+            maxLength={8000}
             rows={1}
             placeholder="質問を入力（Shift+Enterで改行）"
             className="flex-1 bg-transparent px-2.5 py-2 text-[12.5px] placeholder:text-qmute/60 focus:outline-none resize-none max-h-40"
@@ -266,7 +272,7 @@ function TutorInner() {
           />
           {streaming ? (
             <button
-              onClick={() => abortRef.current?.abort()}
+              onClick={stop}
               className="shrink-0 w-9 h-9 rounded-xl bg-edge text-qmute flex items-center justify-center hover:text-plasma"
               aria-label="停止"
             >

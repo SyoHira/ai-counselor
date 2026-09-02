@@ -56,7 +56,7 @@ export default function BlochLab() {
         <h1 className="text-[19px] font-semibold tracking-tight">Bloch球ラボ</h1>
         <p className="text-[12px] text-qmute mt-1 leading-relaxed">
           1量子ビットを密度行列 <Tex>{'\\rho=\\tfrac12(I+\\mathbf r\\cdot\\boldsymbol\\sigma)'}</Tex> として扱います。
-          ユニタリゲートは球面上の回転、ノイズはベクトルの縮み、測定は軸への飛び移りです。
+          ユニタリゲートは球面上の回転、ノイズはベクトルの長さや向きを変え、測定は軸への飛び移りとして表します。
         </p>
       </div>
 
@@ -123,14 +123,15 @@ export default function BlochLab() {
           </Card>
 
           <Card className="p-4">
-            <SectionTitle sub="環境との相互作用でBlochベクトルが球の内側へ縮む">ノイズ（開放系）</SectionTitle>
+            <SectionTitle sub="環境との相互作用による状態の変化">ノイズ（開放系）</SectionTitle>
             <div className="flex flex-wrap gap-1.5">
               <Button variant="ghost" onClick={() => noise(amplitudeDamping, 'T1減衰 20%', 0.2)}>振幅減衰 γ=0.2</Button>
               <Button variant="ghost" onClick={() => noise(phaseDamping, '位相緩和 30%', 0.3)}>位相緩和 λ=0.3</Button>
               <Button variant="ghost" onClick={() => noise(depolarize, '脱分極 20%', 0.2)}>脱分極 p=0.2</Button>
             </div>
             <p className="text-[11px] text-qmute mt-2.5 leading-relaxed">
-              振幅減衰は |1⟩→|0⟩ のエネルギー緩和（T₁）、位相緩和は横成分だけを壊す純デコヒーレンス（T₂）。
+              振幅減衰は |1⟩→|0⟩ のエネルギー緩和（T₁）、位相緩和は横成分だけを壊す純位相緩和です（横緩和 T₂ には振幅減衰も寄与します）。
+              振幅減衰を繰り返すと純粋な基底状態へ近づくので、ベクトルの長さが常に縮むとは限りません。
               位相緩和を繰り返すと <Tex>{'|+\\rangle'}</Tex> は完全混合に近づき、干渉能力を失います。
             </p>
           </Card>
@@ -141,7 +142,7 @@ export default function BlochLab() {
               {Object.entries(BASES).map(([k, b]) => (
                 <button
                   key={k}
-                  onClick={() => setBasis(k)}
+                  onClick={() => { setBasis(k); setTally({ 0: 0, 1: 0 }); }}
                   className={`px-2.5 py-1 rounded-lg text-[11.5px] border transition-colors ${
                     basis === k ? 'bg-quantum/15 text-quantum border-quantum/40' : 'bg-panel border-edge text-qmute hover:border-quantum/40'
                   }`}

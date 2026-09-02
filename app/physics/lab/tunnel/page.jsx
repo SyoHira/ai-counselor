@@ -48,6 +48,7 @@ export default function TunnelLab() {
   // 障壁到達までが |x0|/v、その後 反射波・透過波が箱の端に届くまでが (L/2 − 余裕)/v。
   const speed = Math.max(k0, 0.3);
   const tStop = Math.max(2, Math.min((Math.abs(X0) + L / 2 - 4 * sigma - 8) / speed, 160));
+  const stopped = boundaryHit || (snapshot?.t ?? 0) >= tStop;
 
   const reset = useCallback(() => {
     const x = xRef.current;
@@ -100,6 +101,7 @@ export default function TunnelLab() {
   useEffect(() => {
     if (!running) return;
     const loop = () => {
+      if (timeRef.current >= tStop || boundaryHitRef.current) { setRunning(false); return; }
       const { re, im } = psiRef.current;
       for (let s = 0; s < STEPS_PER_FRAME; s++) {
         evolveStep(re, im, propRef.current);
@@ -161,10 +163,11 @@ export default function TunnelLab() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 mt-4">
-          <Button variant="primary" onClick={() => setRunning((r) => !r)}>
+          <Button variant="primary" onClick={() => setRunning((r) => !r)} disabled={stopped}>
             {running ? '一時停止' : '実行'}
           </Button>
           <Button variant="ghost" onClick={reset}>初期状態に戻す</Button>
+          {stopped && <span className="text-[11px] text-amberq">自動停止しました。再実行するには初期状態に戻してください。</span>}
           <span className="text-[11.5px] text-qmute ml-1">
             t = <span className="tabular-nums text-qink">{(snapshot?.t ?? 0).toFixed(2)}</span>
           </span>
@@ -192,7 +195,7 @@ export default function TunnelLab() {
         />
       </Card>
 
-      <div className="grid sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Card className="p-4">
           <SectionTitle sub="領域ごとに |ψ|² を積分した値">確率の内訳</SectionTitle>
           <div className="space-y-2">
@@ -201,7 +204,7 @@ export default function TunnelLab() {
             <Row label="透過側 (x > a/2)" value={snapshot?.T ?? 0} color="#4fd1c5" />
           </div>
           <div className="mt-3 pt-3 border-t border-edge/60 text-[11.5px] text-qmute space-y-1">
-            <p>規格化 ∫|ψ|²dx = <span className="tabular-nums text-qink">{(snapshot?.norm ?? 1).toFixed(6)}</span>（保存量なので1のままなら計算は健全）</p>
+            <p>規格化 ∫|ψ|²dx = <span className="tabular-nums text-qink">{(snapshot?.norm ?? 1).toFixed(6)}</span>（確率保存の確認。空間・時間刻みや境界誤差の検証は別に必要です）</p>
             <p>⟨x⟩ = <span className="tabular-nums text-qink">{(snapshot?.mean ?? 0).toFixed(2)}</span>　Δx = <span className="tabular-nums text-qink">{(snapshot?.sigma ?? 0).toFixed(2)}</span></p>
           </div>
         </Card>
