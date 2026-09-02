@@ -1,5 +1,6 @@
 // Production browser checks. Run with npm run test:e2e after npm run build.
 import { mkdirSync } from 'node:fs';
+import { MODULES, STATS } from '../lib/physics/curriculum.js';
 import { chromium } from 'playwright';
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
@@ -60,7 +61,7 @@ await page.goto(BASE + '/physics', { waitUntil: 'networkidle' });
 const theme2 = await page.getAttribute('meta[name="theme-color"]', 'content');
 check('物理: theme-color がダーク', theme2 === '#080a12', theme2 || 'なし');
 txt = await page.textContent('body');
-check('物理: 114単元と表示', /114/.test(txt));
+check(`物理: ${STATS.total}単元と表示`, txt.includes(String(STATS.total)));
 check('物理: 推薦カードが出る', (await page.locator('a[href^="/physics/module/"]').count()) >= 2,
   `${await page.locator('a[href^="/physics/module/"]').count()} 件`);
 await page.screenshot({ path: `${SHOTS}/v-home.png` });
@@ -68,15 +69,27 @@ await page.screenshot({ path: `${SHOTS}/v-home.png` });
 // ── カリキュラム: フィルタと検索
 await page.goto(BASE + '/physics/curriculum', { waitUntil: 'networkidle' });
 const all = await page.locator('a[href^="/physics/module/"]').count();
-check('カリキュラム: 全単元が並ぶ', all === 114, `${all} 件`);
+check('カリキュラム: 全単元が並ぶ', all === STATS.total, `${all} 件 / 定義 ${STATS.total} 件`);
 await page.getByRole('button', { name: /量子情報・量子計算/ }).click();
 await page.waitForFunction(() => document.querySelectorAll('a[href^="/physics/module/"]').length === 18);
 const qinfo = await page.locator('a[href^="/physics/module/"]').count();
-check('カリキュラム: 量子情報で18件に絞れる', qinfo === 18, `${qinfo} 件`);
+check('カリキュラム: 量子情報で絞れる', qinfo === STATS.byTrack.qinfo, `${qinfo} 件 / 定義 ${STATS.byTrack.qinfo} 件`);
 await page.fill('input[placeholder*="キーワード"]', 'Grover');
 await page.waitForTimeout(400);
 const grover = await page.locator('a[href^="/physics/module/"]').count();
 check('カリキュラム: 検索が効く（Grover）', grover >= 1, `${grover} 件`);
+
+// ── 高校段階が実用的な厚みを持つか
+await page.goto(BASE + '/physics/curriculum?level=hs', { waitUntil: 'networkidle' });
+await page.waitForTimeout(400);
+const hsCards = await page.locator('a[href^="/physics/module/"]').count();
+const hsDefined = MODULES.filter((m) => m.level === 'hs').length;
+check('高校: 全単元が並ぶ', hsCards === hsDefined, `${hsCards} 件 / 定義 ${hsDefined} 件`);
+const hsText = await page.textContent('body');
+for (const topic of ['力のつり合い', '運動量と力積', '剛体のつり合い', '直流回路', 'コンデンサー', 'ローレンツ力', '交流', '熱量の保存', 'ドップラー', '全反射', '原子核', '有効数字']) {
+  check(`高校: 「${topic}」の単元がある`, hsText.includes(topic));
+}
+check('高校: 物理基礎と物理の区分が表示される', hsText.includes('物理基礎') && hsText.includes('物理'));
 
 // ── 単元詳細: 数式と進捗
 await page.goto(BASE + '/physics/module/qm-ug-02', { waitUntil: 'networkidle' });
@@ -87,7 +100,7 @@ check('単元: 状態が「習得」になる', (await page.textContent('body'))
 await page.goto(BASE + '/physics', { waitUntil: 'networkidle' });
 await page.waitForTimeout(400);
 txt = (await page.textContent('body')).replace(/\s+/g, ' ');
-check('進捗: localStorageに保存されホームへ反映', /習得 1 \/ 114/.test(txt));
+check('進捗: localStorageに保存されホームへ反映', txt.includes(`習得 1 / ${STATS.total}`));
 
 await page.goto(BASE + '/physics/lab', { waitUntil: 'networkidle' });
 check('ラボ一覧: 4つのラボへの入口', await page.getByRole('link', { name: '開く', exact: true }).count() === 4);

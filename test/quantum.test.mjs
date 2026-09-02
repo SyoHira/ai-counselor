@@ -228,3 +228,22 @@ test('カリキュラム: ラボの紐付けが実在するラボを指す', () 
     for (const l of m.labs || []) assert.ok(known.has(l), `${m.id} が未知のラボ ${l} を指している`);
   }
 });
+
+test('カリキュラム: 高校の全単元に 物理基礎／物理 の区分がある', () => {
+  const hs = MODULES.filter((m) => m.level === 'hs');
+  assert.ok(hs.length >= 30, `高校の単元数 ${hs.length}`);
+  for (const m of hs) {
+    assert.ok(['物理基礎', '物理'].includes(m.course), `${m.id} の course が不正: ${m.course}`);
+  }
+});
+
+test('カリキュラム: 高校で主要分野が網羅されている', () => {
+  const hs = MODULES.filter((m) => m.level === 'hs');
+  const byTrack = {};
+  for (const m of hs) byTrack[m.track] = (byTrack[m.track] || 0) + 1;
+  for (const t of ['mech', 'em', 'thermo', 'wave', 'qm', 'part', 'exp', 'math']) {
+    assert.ok(byTrack[t] >= 1, `高校に ${t} の単元がない`);
+  }
+  assert.ok(byTrack.mech >= 8, `力学が ${byTrack.mech} 単元しかない`);
+  assert.ok(byTrack.em >= 6, `電磁気が ${byTrack.em} 単元しかない`);
+});

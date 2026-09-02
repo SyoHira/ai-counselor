@@ -18,6 +18,7 @@ export default function ModuleCard({ module, progress, reason, compact = false }
     >
       <div className="flex items-center gap-2 mb-2 flex-wrap">
         <Badge tone={levelTone(module.level)}>{level.label}</Badge>
+        {module.course && <Badge>{module.course}</Badge>}
         <span className="text-[11px] text-qmute flex items-center gap-1">
           <span className="text-[12px]">{track.icon}</span>
           {track.label}

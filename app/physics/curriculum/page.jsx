@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { LEVELS, TRACKS, MODULES } from '@/lib/physics/curriculum';
+import { LEVELS, TRACKS, MODULES, sortForDisplay } from '@/lib/physics/curriculum';
 import { loadProgress } from '@/lib/physics/progress';
 import { Badge, SectionTitle, levelTone } from '@/components/physics/ui';
 import ModuleCard from '@/components/physics/ModuleCard';
@@ -46,7 +46,7 @@ function CurriculumInner() {
       if (!map.has(m.level)) map.set(m.level, []);
       map.get(m.level).push(m);
     }
-    return LEVELS.filter((l) => map.has(l.id)).map((l) => ({ level: l, items: map.get(l.id) }));
+    return LEVELS.filter((l) => map.has(l.id)).map((l) => ({ level: l, items: sortForDisplay(map.get(l.id)) }));
   }, [filtered]);
 
   return (

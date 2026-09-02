@@ -44,6 +44,7 @@ export default function ModulePage({ params }) {
       <header>
         <div className="flex items-center gap-2 flex-wrap mb-2">
           <Badge tone={levelTone(mod.level)}>{level.full}</Badge>
+          {mod.course && <Badge tone="photon">{mod.course}</Badge>}
           <Badge tone={statusTone(status)}>{STATUS[status]?.label}</Badge>
           <span className="text-[11px] text-qmute">目安 {mod.minutes} 分</span>
           <span className="text-[10.5px] text-qmute/50 font-mono ml-auto">{mod.id}</span>
