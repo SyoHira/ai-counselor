@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { LEVELS, TRACKS, MODULES, STATS } from '@/lib/physics/curriculum';
 import { loadProgress, computeStats, recommend, dueForReview } from '@/lib/physics/progress';
+import { PROBLEM_STATS } from '@/lib/physics/problems';
 import { Card, SectionTitle, Meter, Ring, Badge, LinkButton, levelTone } from '@/components/physics/ui';
 import ModuleCard from '@/components/physics/ModuleCard';
 
@@ -43,11 +44,12 @@ export default function PhysicsHome() {
               </h1>
               <p className="text-[12.5px] text-qmute mt-2.5 leading-relaxed max-w-xl">
                 全 {STATS.total} 単元・13領域を、前提関係でつないだ一本の道にしています。
-                とくに量子力学と量子情報は {quantumCount} 単元を割き、理論だけでなく
-                手を動かして確かめられるシミュレータを備えています。
+                各単元には解説つきの練習問題（全 {PROBLEM_STATS.total} 問）が付き、解いた結果が学習の状態に記録されます。
+                とくに量子力学と量子情報は {quantumCount} 単元を割き、手を動かして確かめられるシミュレータを備えています。
               </p>
               <div className="flex flex-wrap gap-2 mt-4">
                 <LinkButton href="/physics/curriculum" variant="primary">カリキュラムを見る</LinkButton>
+                <LinkButton href="/physics/practice">演習を解く</LinkButton>
                 <LinkButton href="/physics/lab">量子ラボを開く</LinkButton>
                 <LinkButton href="/physics/tutor">チューターに聞く</LinkButton>
               </div>

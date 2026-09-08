@@ -7,6 +7,8 @@ import { getModule, levelOf, trackOf, dependents, learningPath } from '@/lib/phy
 import { getModuleProgress, setStatus, STATUS } from '@/lib/physics/progress';
 import { Card, SectionTitle, Badge, Button, LinkButton, levelTone, statusTone } from '@/components/physics/ui';
 import Tex from '@/components/physics/Tex';
+import ProblemCard from '@/components/physics/ProblemCard';
+import { problemsFor } from '@/lib/physics/problems';
 
 const LAB_INFO = {
   circuit: { href: '/physics/lab/circuit', label: '量子回路シミュレータ' },
@@ -35,6 +37,7 @@ export default function ModulePage({ params }) {
   const path = learningPath(mod.id).filter((m) => m.id !== mod.id);
   const next = dependents(mod.id);
   const status = progress?.status || 'todo';
+  const problems = problemsFor(mod.id);
 
   return (
     <div className="space-y-6">
@@ -97,6 +100,17 @@ export default function ModulePage({ params }) {
             ))}
           </div>
         </Card>
+      )}
+
+      {problems.length > 0 && (
+        <section>
+          <SectionTitle sub="解いたあとに段階的な解説を読む。正誤は学習の状態に記録される">演習で確かめる（{problems.length}問）</SectionTitle>
+          <div className="space-y-2.5">
+            {problems.map((p, i) => (
+              <ProblemCard key={p.id} problem={p} index={i} defaultOpen={i === 0} />
+            ))}
+          </div>
+        </section>
       )}
 
       <Card className="p-4">

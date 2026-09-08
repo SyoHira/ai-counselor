@@ -1,6 +1,7 @@
 // Production browser checks. Run with npm run test:e2e after npm run build.
 import { mkdirSync } from 'node:fs';
 import { MODULES, STATS } from '../lib/physics/curriculum.js';
+import { PROBLEMS, PROBLEM_STATS } from '../lib/physics/problems.js';
 import { chromium } from 'playwright';
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
@@ -39,6 +40,7 @@ page.on('response', response => {
 });
 
 const results = [];
+let saved;
 const check = (name, cond, detail = '') => {
   results.push({ name, ok: !!cond, detail });
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  (' + detail + ')' : ''}`);
@@ -223,6 +225,76 @@ await page.getByRole('button', { name: 'テイラー展開' }).click();
 await page.waitForTimeout(400);
 check('数学ラボ: テイラー展開が描かれる', (await page.textContent('body')).includes('収束半径'));
 
+// ── 問題集（APIキー不要でその場採点・解説）
+const bankModule = MODULES.find(m => {
+  const list = PROBLEMS.filter(p => p.module === m.id);
+  return list.some(p => p.type === 'mc') && list.some(p => p.type === 'numeric');
+});
+const mcProblem = PROBLEMS.find(p => p.module === bankModule.id && p.type === 'mc');
+const numProblem = PROBLEMS.find(p => p.module === bankModule.id && p.type === 'numeric');
+// KaTeX で描画される $...$ を除いた、地の文の最長断片（描画後のテキストと照合するため）
+const plainest = text => text.split(/\$[^$]*\$/).map(t => t.trim()).sort((a, b) => b.length - a.length)[0];
+const openCard = async id => {
+  const card = page.locator(`[data-problem="${id}"]`);
+  if (await card.locator('[data-role="check"]').count() === 0) await card.locator('[data-role="toggle"]').click();
+  return card;
+};
+await page.goto(BASE + '/physics/module/' + bankModule.id, { waitUntil: 'networkidle' });
+await page.evaluate(() => localStorage.removeItem('physics.progress.v1'));
+await page.reload({ waitUntil: 'networkidle' });
+txt = await page.textContent('body');
+check('問題集: 単元ページに演習が出る', txt.includes('演習で確かめる'));
+check('問題集: 解答は最初は隠れている', await page.locator('[data-role="solution"]').count() === 0);
+check('問題集: 全問が並ぶ', await page.locator('[data-problem]').count() === PROBLEMS.filter(p => p.module === bankModule.id).length);
+
+// 誤答を選ぶ → その場で採点され、正解と段階的な解説が出る
+let card = await openCard(mcProblem.id);
+const wrong = (mcProblem.answer + 1) % mcProblem.choices.length;
+await card.locator(`[data-role="choice"][data-index="${wrong}"]`).click();
+await card.locator('[data-role="check"]').click();
+await card.locator('[data-role="solution"]').waitFor();
+txt = await card.textContent();
+check('問題集: 誤答が判定される', txt.includes('要復習'));
+check('問題集: 段階的な解説が出る', mcProblem.solution.every(step => txt.includes(plainest(step))), `${mcProblem.solution.length}段階`);
+check('問題集: よくある誤りが示される', !mcProblem.misconception || txt.includes('よくある誤り'));
+saved = await page.evaluate(() => JSON.parse(localStorage.getItem('physics.progress.v1')));
+check('問題集: 問題単位で記録される', saved.problems[mcProblem.id].attempts === 1 && saved.problems[mcProblem.id].lastCorrect === false);
+check('問題集: 単元の進捗にも反映される', saved.modules[bankModule.id].attempts === 1 && saved.modules[bankModule.id].correct === 0);
+check('問題集: 採点後は選択肢を変えられない', await card.locator('[data-role="choice"]').first().isDisabled());
+check('問題集: 解答欄が正解の番号を示す',
+  (await card.locator('[data-role="solution"]').textContent()).includes(`${mcProblem.answer + 1}.`),
+  `正解は ${mcProblem.answer + 1} 番`);
+
+// 数値問題：許容誤差の内側なら正解、外側なら不正解
+card = await openCard(numProblem.id);
+const tol = numProblem.answer.tol ?? 0.02;
+await card.locator('[data-role="numeric"]').fill(String(numProblem.answer.value * (1 + tol * 0.5)));
+await card.locator('[data-role="check"]').click();
+await card.locator('[data-role="solution"]').waitFor();
+saved = await page.evaluate(() => JSON.parse(localStorage.getItem('physics.progress.v1')));
+check('問題集: 数値は許容誤差の内側なら正解', saved.problems[numProblem.id].lastCorrect === true);
+
+// 解答を先に見た問題は習得判定に加算しない（問題単位の履歴には残る）
+await page.goto(BASE + '/physics/practice?module=' + bankModule.id, { waitUntil: 'networkidle' });
+await page.evaluate(() => localStorage.removeItem('physics.progress.v1'));
+await page.reload({ waitUntil: 'networkidle' });
+check('演習: 問題集タブが既定', await page.locator('[data-problem]').count() > 0);
+card = await openCard(mcProblem.id);
+await card.locator('[data-role="reveal"]').click();
+await card.locator(`[data-role="choice"][data-index="${mcProblem.answer}"]`).click();
+await card.locator('[data-role="check"]').click();
+await page.waitForFunction(id => {
+  const s = JSON.parse(localStorage.getItem('physics.progress.v1') || '{}');
+  return s.problems && s.problems[id];
+}, mcProblem.id);
+saved = await page.evaluate(() => JSON.parse(localStorage.getItem('physics.progress.v1')));
+check('問題集: 解答を見た問題は習得判定に加算しない', !saved.modules[bankModule.id]);
+check('問題集: それでも問題単位の履歴には残る', saved.problems[mcProblem.id].attempts === 1);
+check('問題集: チューターへ問題つきで送れる',
+  (await card.getByRole('link', { name: /チューターに詳しく聞く/ }).getAttribute('href'))
+    === `/physics/tutor?module=${mcProblem.module}&problem=${mcProblem.id}`);
+check('問題集: 全単元に問題がある', PROBLEM_STATS.modules === MODULES.length, `${PROBLEM_STATS.modules}/${MODULES.length}`);
+
 // ── チューター・演習（APIキー無しでもUIが壊れないこと）
 await page.goto(BASE + '/physics/tutor', { waitUntil: 'networkidle' });
 await page.getByRole('button', { name: '導出' }).click();
@@ -232,6 +304,7 @@ await page.waitForTimeout(2500);
 txt = await page.textContent('body');
 check('チューター: APIキー無しでエラーを日本語表示', txt.includes('ANTHROPIC_API_KEY'));
 await page.goto(BASE + '/physics/practice', { waitUntil: 'networkidle' });
+await page.getByRole('tab', { name: 'AIで生成' }).click();
 await page.getByRole('button', { name: /問題を作る/ }).click();
 await page.waitForTimeout(2500);
 check('演習: APIキー無しでエラーを日本語表示', (await page.textContent('body')).includes('ANTHROPIC_API_KEY'));
@@ -249,7 +322,7 @@ await page.route('**/api/physics-problem', async route => {
     await route.fulfill({ json: { correct: true, score: 100, feedback: '添削テスト完了', misconception: '' } });
   }
 });
-await page.goto(BASE + '/physics/practice?module=qm-ug-02', { waitUntil: 'networkidle' });
+await page.goto(BASE + '/physics/practice?module=qm-ug-02&mode=ai', { waitUntil: 'networkidle' });
 await page.getByRole('button', { name: /問題を作る/ }).click();
 await page.getByText('回帰テスト問題', { exact: true }).waitFor();
 await page.locator('textarea').fill('2');
@@ -260,7 +333,7 @@ await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b
 await waitForFixture(() => releaseGrade);
 releaseGrade();
 await page.getByText('添削テスト完了', { exact: true }).waitFor();
-let saved = await page.evaluate(() => JSON.parse(localStorage.getItem('physics.progress.v1')));
+saved = await page.evaluate(() => JSON.parse(localStorage.getItem('physics.progress.v1')));
 check('演習: 元の単元へ一度だけ記録', gradeCalls === 1 && saved.modules['qm-ug-02'].attempts === 1);
 await page.getByRole('combobox', { name: '単元' }).selectOption('qinfo-ug-01');
 check('演習: 単元変更で古い問題を消去', await page.getByText('回帰テスト問題', { exact: true }).count() === 0);

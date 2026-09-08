@@ -52,6 +52,10 @@ function TutorInner() {
   const params = useSearchParams();
   const moduleId = canonicalModuleId(params.get('module') || '');
   const mod = moduleId ? getModule(moduleId) : null;
+  // 問題IDはサーバ側で存在と単元の一致を検証する。ここでは形式だけ確認し、
+  // 問題集そのものをクライアントバンドルへ持ち込まない。
+  const rawProblem = params.get('problem') || '';
+  const problemId = moduleId && rawProblem.startsWith(`${moduleId}-`) ? rawProblem : '';
 
   const [level, setLevel] = useState(mod?.level || 'ug');
   const [mode, setMode] = useState('intuition');
@@ -94,7 +98,7 @@ function TutorInner() {
       const res = await fetch('/api/physics-tutor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next.filter(m => m.content.trim()).slice(-24).map(m => ({ ...m, content: m.content.slice(0, 8000) })), level, mode, moduleId }),
+        body: JSON.stringify({ messages: next.filter(m => m.content.trim()).slice(-24).map(m => ({ ...m, content: m.content.slice(0, 8000) })), level, mode, moduleId, ...(problemId ? { problemId } : {}) }),
         signal: controller.signal,
       });
       if (abortRef.current !== controller) return;
@@ -150,7 +154,13 @@ function TutorInner() {
     setMessages(current => current.filter(message => message.role !== 'assistant' || message.content));
   };
 
-  const starters = mod
+  const starters = problemId
+    ? [
+        'この問題で、どの段階で詰まりやすいかを問いながら解説して',
+        '解説の各段階を、別の数値例で言い換えて',
+        'この問題の設定を少し変えると答えはどう変わる？',
+      ]
+    : mod
     ? [
         `「${mod.title}」の要点を、いまのレベルに合わせて説明して`,
         ...(mod.goals || []).slice(0, 2).map((g) => `${g}——これができるように教えて`),
