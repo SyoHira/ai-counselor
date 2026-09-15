@@ -71,3 +71,5 @@
 | [01-start.md](./01-start.md) | 今週やること。初月10万円までの具体的な手順 |
 | [02-growth.md](./02-growth.md) | 受託がデータに変わる仕組みと、その先の伸ばし方 |
 | [03-risks.md](./03-risks.md) | 規約・法務・仮説が外れた場合 |
+| [04-other-models.md](./04-other-models.md) | 同じエンジンで動く他の事業モデル5つと、試す順序 |
+| [`../../ai-visibility/`](../../ai-visibility/) | 01の計測を自動化した実装 |

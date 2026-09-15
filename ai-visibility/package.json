@@ -1,0 +1,17 @@
+{
+  "name": "ai-visibility",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI検索での見え方を測る計測パイプライン",
+  "scripts": {
+    "measure": "node src/cli.js measure",
+    "classify": "node src/cli.js classify",
+    "analyze": "node src/cli.js analyze",
+    "report": "node src/cli.js report",
+    "all": "node src/cli.js all"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "category": "睡眠サポート系サプリ",
+  "note": "competitors には、このカテゴリで名前が挙がりうるブランドを網羅的に入れる。依頼主だけでなく競合も測ることが、データを資産に変える唯一の仕掛け。",
+  "ingredients": ["グリシン", "GABA", "L-テアニン", "マグネシウム"],
+  "concerns": ["寝つきが悪い", "夜中に目が覚める", "朝の目覚めが悪い"],
+  "brands": [
+    {
+      "id": "brand-a",
+      "name": "ブランドA",
+      "aliases": ["BrandA", "ブランドエー"],
+      "client": true,
+      "products": ["ぐっすりサポート"],
+      "ingredients": ["グリシン", "L-テアニン"]
+    },
+    {
+      "id": "brand-b",
+      "name": "ブランドB",
+      "aliases": ["BrandB"],
+      "client": false,
+      "products": [],
+      "ingredients": ["GABA"]
+    }
+  ]
+}
