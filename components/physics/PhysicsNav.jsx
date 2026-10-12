@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 const ITEMS = [
   { href: '/physics', label: 'ホーム', icon: '◎', exact: true },
   { href: '/physics/curriculum', label: 'カリキュラム', icon: '☰' },
+  { href: '/physics/phenomena', label: '現象から', icon: '◐' },
   { href: '/physics/lab', label: '量子ラボ', icon: '⊗' },
   { href: '/physics/tutor', label: 'チューター', icon: '✦' },
   { href: '/physics/practice', label: '演習', icon: '✎' },

@@ -9,6 +9,10 @@ import { Card, SectionTitle, Badge, Button, LinkButton, levelTone, statusTone } 
 import Tex from '@/components/physics/Tex';
 import ProblemCard from '@/components/physics/ProblemCard';
 import { problemsFor } from '@/lib/physics/problems';
+import { EQUATION_MEANING } from '@/lib/physics/equationMeaning';
+import { connectionsOf } from '@/lib/physics/connections';
+import { phenomenaFor } from '@/lib/physics/phenomena';
+import RichText from '@/components/physics/RichText';
 
 const LAB_INFO = {
   circuit: { href: '/physics/lab/circuit', label: '量子回路シミュレータ' },
@@ -38,6 +42,8 @@ export default function ModulePage({ params }) {
   const next = dependents(mod.id);
   const status = progress?.status || 'todo';
   const problems = problemsFor(mod.id);
+  const connections = connectionsOf(mod.id);
+  const phenomena = phenomenaFor(mod.id);
 
   return (
     <div className="space-y-6">
@@ -88,18 +94,73 @@ export default function ModulePage({ params }) {
 
       {mod.equations?.length > 0 && (
         <Card className="p-4">
-          <SectionTitle sub="この単元の骨格になる式">核心となる式</SectionTitle>
-          <div className="space-y-4">
-            {mod.equations.map((eq, i) => (
-              <div key={i}>
-                <div className="rounded-xl bg-vacuum/60 border border-edge/60 px-3 py-2.5 overflow-x-auto">
-                  <Tex display>{eq.tex}</Tex>
+          <SectionTitle sub="式を「読み下す」と、現実の何が決まるかが見える">核心となる式</SectionTitle>
+          <div className="space-y-5">
+            {mod.equations.map((eq, i) => {
+              const meaning = EQUATION_MEANING[`${mod.id}#${i}`];
+              return (
+                <div key={i} data-equation={i}>
+                  <div className="rounded-xl bg-vacuum/60 border border-edge/60 px-3 py-2.5 overflow-x-auto">
+                    <Tex display>{eq.tex}</Tex>
+                  </div>
+                  <p className="text-[11.5px] text-qmute mt-1.5">{eq.note}</p>
+                  {meaning && (
+                    <div className="mt-2.5 grid sm:grid-cols-2 gap-2.5">
+                      <div className="rounded-xl border border-quantum/25 bg-quantum/[0.05] px-3 py-2.5">
+                        <p className="text-[10.5px] text-quantum mb-1">式を読む</p>
+                        <RichText text={meaning.reads} className="text-[12px] leading-[1.8]" />
+                      </div>
+                      <div className="rounded-xl border border-photon/25 bg-photon/[0.05] px-3 py-2.5">
+                        <p className="text-[10.5px] text-photon mb-1">現実では</p>
+                        <RichText text={meaning.example} className="text-[12px] leading-[1.8]" />
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <p className="text-[11.5px] text-qmute mt-1.5">{eq.note}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
+      )}
+
+      {phenomena.length > 0 && (
+        <section>
+          <SectionTitle sub="この単元の式が、身近な現象のどこで効いているか">身近な現象でつかむ</SectionTitle>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {phenomena.map((ph) => (
+              <Link
+                key={ph.id}
+                href={`/physics/phenomena#${ph.id}`}
+                className="rounded-xl bg-panel/60 border border-edge/70 hover:border-photon/50 transition-colors px-3 py-2.5 flex gap-2.5"
+              >
+                <span className="text-[18px] shrink-0">{ph.icon}</span>
+                <div className="min-w-0">
+                  <div className="text-[12.5px] text-qink leading-snug"><RichText text={ph.title} className="text-[12.5px]" /></div>
+                  <p className="text-[11px] text-qmute mt-0.5 leading-relaxed">{ph.hook}</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {connections.length > 0 && (
+        <section>
+          <SectionTitle sub="前提関係とは別に、違う分野で同じ構造が現れる場所">他分野とのつながり</SectionTitle>
+          <Card className="p-2 divide-y divide-edge/50">
+            {connections.map((c) => (
+              <div key={c.module.id} className="px-2 py-3" data-connection={c.module.id}>
+                <Link href={`/physics/module/${c.module.id}`} className="flex items-center gap-2 group">
+                  <span className="text-[14px]">{trackOf(c.module.track).icon}</span>
+                  <Badge tone={levelTone(c.module.level)}>{levelOf(c.module.level).label}</Badge>
+                  <span className="text-[12.5px] text-qink group-hover:text-quantum transition-colors">{c.module.title}</span>
+                  <span className="text-[10.5px] text-qmute ml-auto shrink-0">{trackOf(c.module.track).label}</span>
+                </Link>
+                <div className="mt-1.5 pl-6"><RichText text={c.why} className="text-[11.5px] text-qmute leading-[1.75]" /></div>
+              </div>
+            ))}
+          </Card>
+        </section>
       )}
 
       {problems.length > 0 && (

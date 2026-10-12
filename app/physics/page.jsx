@@ -44,11 +44,13 @@ export default function PhysicsHome() {
               </h1>
               <p className="text-[12.5px] text-qmute mt-2.5 leading-relaxed max-w-xl">
                 全 {STATS.total} 単元・13領域を、前提関係でつないだ一本の道にしています。
-                各単元には解説つきの練習問題（全 {PROBLEM_STATS.total} 問）が付き、解いた結果が学習の状態に記録されます。
+                核心となる式には「式を読む」「現実では」を添え、各単元に解説つきの練習問題（全 {PROBLEM_STATS.total} 問）と
+                他分野とのつながりを付けています。
                 とくに量子力学と量子情報は {quantumCount} 単元を割き、手を動かして確かめられるシミュレータを備えています。
               </p>
               <div className="flex flex-wrap gap-2 mt-4">
                 <LinkButton href="/physics/curriculum" variant="primary">カリキュラムを見る</LinkButton>
+                <LinkButton href="/physics/phenomena">身近な現象から探す</LinkButton>
                 <LinkButton href="/physics/practice">演習を解く</LinkButton>
                 <LinkButton href="/physics/lab">量子ラボを開く</LinkButton>
                 <LinkButton href="/physics/tutor">チューターに聞く</LinkButton>

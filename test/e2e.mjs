@@ -2,6 +2,7 @@
 import { mkdirSync } from 'node:fs';
 import { MODULES, STATS } from '../lib/physics/curriculum.js';
 import { PROBLEMS, PROBLEM_STATS } from '../lib/physics/problems.js';
+import { PHENOMENA } from '../lib/physics/phenomena.js';
 import { chromium } from 'playwright';
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
@@ -225,6 +226,29 @@ await page.getByRole('button', { name: 'テイラー展開' }).click();
 await page.waitForTimeout(400);
 check('数学ラボ: テイラー展開が描かれる', (await page.textContent('body')).includes('収束半径'));
 
+// ── 式の意味づけ・現象・つながり
+await page.goto(BASE + '/physics/module/mech-hs-09', { waitUntil: 'networkidle' });
+txt = await page.textContent('body');
+check('式の意味: 「式を読む」と「現実では」が式ごとに出る',
+  (await page.locator('[data-equation]').count()) === 2 && (txt.match(/式を読む/g) || []).length === 2 && (txt.match(/現実では/g) || []).length === 2);
+check('式の意味: 現実の例の本文が描画される', txt.includes('落ちるリンゴも回る月も同じ式'));
+check('つながり: 他分野への項目が出る', (await page.locator('[data-connection]').count()) >= 2 && txt.includes('他分野とのつながり'));
+check('つながり: 別領域の単元へのリンク', (await page.locator('[data-connection="em-hs-01"] a').getAttribute('href')) === '/physics/module/em-hs-01');
+check('現象: 単元ページから現象へのリンク', (await page.locator('a[href="/physics/phenomena#gps"]').count()) === 1);
+await page.locator('a[href="/physics/phenomena#gps"]').click();
+await page.waitForURL(/\/physics\/phenomena/);
+await page.locator('[data-phenomenon="gps"]').waitFor();
+txt = await page.textContent('body');
+check('現象: 一覧ページに全件', (await page.locator('[data-phenomenon]').count()) === PHENOMENA.length, `${PHENOMENA.length}件`);
+check('現象: 単元が基礎→発展で並ぶ',
+  (await page.locator('[data-phenomenon="gps"] ol li').allTextContents()).map(t => t.trim().slice(0, 2)).join('|') !== '' &&
+  (await page.locator('[data-phenomenon="gps"] ol li a').count()) === 4);
+check('現象: タグで絞れる', await (async () => {
+  await page.getByRole('button', { name: '相対論' }).click();
+  const n = await page.locator('[data-phenomenon]').count();
+  return n > 0 && n < PHENOMENA.length && (await page.locator('[data-phenomenon="gps"]').count()) === 1;
+})());
+
 // ── 問題集（APIキー不要でその場採点・解説）
 const bankModule = MODULES.find(m => {
   const list = PROBLEMS.filter(p => p.module === m.id);
@@ -402,7 +426,7 @@ await page.screenshot({ path: `${SHOTS}/v-measurement.png` });
 // ── モバイル幅で崩れないか
 const mob = await ctx.newPage();
 await mob.setViewportSize({ width: 390, height: 844 });
-for (const p of ['/physics', '/physics/curriculum', '/physics/module/qm-ug-02', '/physics/lab', '/physics/lab/circuit', '/physics/lab/bloch', '/physics/lab/well', '/physics/lab/tunnel', '/physics/lab/math', '/physics/tutor', '/physics/practice']) {
+for (const p of ['/physics', '/physics/curriculum', '/physics/module/qm-ug-02', '/physics/lab', '/physics/lab/circuit', '/physics/lab/bloch', '/physics/lab/well', '/physics/lab/tunnel', '/physics/lab/math', '/physics/tutor', '/physics/practice', '/physics/phenomena']) {
   await mob.goto(BASE + p, { waitUntil: 'networkidle' });
   await mob.waitForTimeout(500);
   const overflow = await mob.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
