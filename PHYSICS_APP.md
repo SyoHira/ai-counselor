@@ -181,13 +181,37 @@ Gibbsの行き過ぎが跳びの約9%であること、固有値・固有ベク�
 
 `app/api/physics-tutor/route.js`, `app/api/physics-problem/route.js`, `lib/physics/tutorPrompt.js`
 
-- モデル: `claude-opus-5` / adaptive thinking / ストリーミング（SSE）
+- 接続先: Google Gemini / OpenRouter（DeepSeek・Qwen など）/ Ollama（ローカル）/ Claude を切り替えて使う（6.1）
+- ストリーミング（SSE）。思考過程（`<think>` や reasoning）は本文から除き、「考えています」表示だけに使う
 - システムプロンプトを **レベル（4段階）× モード（6種）× 学習中の単元** で組み立てる
   - モード: 直観 / 導出 / 例題 / 対話（ソクラテス式）/ 誤解チェック / 研究文脈
 - 数式は `$...$` `$$...$$` で返させ、`components/physics/RichText.jsx` が KaTeX で描画
 - 演習ページの「AIで生成」タブは JSON で問題を生成し、記述解答は「結論だけでなく論理の筋道」を評価して添削。
   正誤は単元の進捗に記録される。教材内蔵の問題集（第5節）はAPIキーなしで動くので、こちらは追加の演習という位置づけ
-- `ANTHROPIC_API_KEY` 未設定時は 503 と日本語の案内を返す（ラボとカリキュラムはAPIキーなしで完全に動作する）
+- 接続先が1つも設定されていないときは 503 と日本語の案内を返す（ラボ・カリキュラム・問題集はキーなしで完全に動作する）
+
+### 6.1 接続先の切り替えと使用量管理 `/physics/ai`
+
+`lib/physics/ai/`（`providers.js` 接続先、`router.js` 選択・切り替え・記録、`openaiCompat.js` OpenAI互換API、`anthropicAdapter.js`、`store.js` 設定と使用履歴）
+
+- **キーは `.env.local` だけ**に置く。画面とAPIはキーを返さない
+  ```
+  GEMINI_API_KEY=...                         # Google AI Studio で発行（無料枠あり）
+  OPENROUTER_API_KEY=...                     # openrouter.ai/keys（:free モデルは無料）
+  OLLAMA_BASE_URL=http://localhost:11434/v1  # Ollama を使う場合（キー不要）
+  ANTHROPIC_API_KEY=...                      # Claude を使う場合
+  ```
+- **モデル名・優先順・上限は「AI設定」画面**で決め、`data/ai-settings.json` に保存する。
+  モデル名は各社で頻繁に変わるため決め打ちせず、各社の `/models` から一覧を取得して選ぶ（OpenRouter は「無料のみ」で絞り込める）。
+  `GEMINI_MODEL` などの環境変数でも既定を指定できる
+- **自動**: 優先順に試し、本文を送り始める前の失敗（無料枠の429、接続不可、JSONが壊れている等）なら次の接続先へ切り替える。
+  チューターと演習の画面では、自動か特定の接続先かを選べ、どのモデルが答えたかを回答の下に表示する
+- **使用量**: 1回ごとに日時・機能・接続先・モデル・入出力トークン・費用・成否を `data/ai-usage.jsonl` に記録し、今日/今月で集計する。
+  費用は接続先が報告した額だけを記録する（OpenRouter は実額、Ollama は0、Gemini・Claude は各社の画面で確認）。
+  OpenRouter はキー単位の実際の利用額・残高も取得して並べて表示する
+- **上限**: 接続先ごとに「1日の回数」、OpenRouter は「月の金額」を設定でき、達したら呼ばずに次へ回す。
+  OpenRouter のキー自体にも openrouter.ai 側で上限を設定しておくと二重の歯止めになる
+- `data/` はローカル実行用（gitignore 済み）。読み取り専用の環境では設定を保存できない
 
 ---
 
@@ -201,11 +225,11 @@ npm run build
 
 # ブラウザ通しテスト（PlaywrightはdevDependenciesに固定）
 npx playwright install --with-deps chromium  # 初回のみ
-npm run test:e2e     # APIキーを空にした専用サーバを自動起動・終了。CHROME_PATHで既存ブラウザを指定可能
+npm run test:e2e     # 全てのAIキーを空にした専用サーバを自動起動・終了。CHROME_PATHで既存ブラウザを指定可能
 ```
 
-`.env.local` に `ANTHROPIC_API_KEY=sk-ant-...` を置くとチューターと演習が有効になる。
-未設定でもカリキュラム・単元・量子ラボは完全に動作し、チューターと演習だけが日本語のエラーを表示する。
+`.env.local` に接続先のキー（6.1）を置き、「AI設定」画面でモデルを選ぶとチューターと演習が有効になる。
+未設定でもカリキュラム・単元・量子ラボ・問題集は完全に動作し、チューターと「AIで生成」だけが日本語の案内を表示する。
 
 Node.js 22.12以上が必要。`.github/workflows/physics.yml` で `npm ci` → 単体/APIテスト → production build → ブラウザテストを実行する。APIテストは偽のキーとmock fetch、ブラウザのAI正常系は固定応答を使い、実モデルには接続しない。
 

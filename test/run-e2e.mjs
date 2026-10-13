@@ -1,15 +1,21 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-// Own the server and clear the API key so a test can never spend provider credits.
+// Own the server and clear every AI key so a test can never spend provider credits.
 const socket = createServer().listen(0, '127.0.0.1');
 await once(socket, 'listening');
 const port = socket.address().port;
 await new Promise(resolve => socket.close(resolve));
 const base = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(port)], {
-  stdio: 'inherit', env: { ...process.env, ANTHROPIC_API_KEY: '', NEXT_TELEMETRY_DISABLED: '1' },
+  stdio: 'inherit', env: {
+    ...process.env, ANTHROPIC_API_KEY: '', GEMINI_API_KEY: '', OPENROUTER_API_KEY: '', OLLAMA_MODEL: '', OLLAMA_BASE_URL: '',
+    AI_DATA_DIR: mkdtempSync(join(tmpdir(), 'physics-e2e-')), NEXT_TELEMETRY_DISABLED: '1',
+  },
 });
 try {
   let ready = false;

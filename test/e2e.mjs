@@ -332,6 +332,24 @@ await page.getByRole('tab', { name: 'AIで生成' }).click();
 await page.getByRole('button', { name: /問題を作る/ }).click();
 await page.waitForTimeout(2500);
 check('演習: APIキー無しでエラーを日本語表示', (await page.textContent('body')).includes('ANTHROPIC_API_KEY'));
+check('演習: AIの接続先を選べる', await page.locator('[data-role="ai-provider"]').count() === 1);
+
+// ── AI設定と使用量（キー無しの状態）
+await page.goto(BASE + '/physics/ai', { waitUntil: 'networkidle' });
+check('AI設定: 4つの接続先を優先順に表示',
+  (await page.locator('[data-provider]').evaluateAll(els => els.map(e => e.dataset.provider))).join() === 'gemini,openrouter,ollama,anthropic');
+txt = await page.textContent('body');
+check('AI設定: 未設定の接続先に .env.local の書き方を案内', ['GEMINI_API_KEY=', 'OPENROUTER_API_KEY=', 'OLLAMA_BASE_URL='].every(k => txt.includes(k)));
+check('AI設定: 使用量の合計を表示', await page.locator('[data-role="usage-totals"]').count() === 1);
+check('AI設定: 未変更なら保存ボタンを出さない', await page.locator('[data-role="save-ai-settings"]').count() === 0);
+await page.getByRole('button', { name: '下へ' }).first().click();
+check('AI設定: 優先順を入れ替えられる',
+  (await page.locator('[data-provider]').evaluateAll(els => els.map(e => e.dataset.provider))).join() === 'openrouter,gemini,ollama,anthropic');
+await page.locator('[data-role="save-ai-settings"]').click();
+await page.getByText('保存しました。').waitFor();
+await page.reload({ waitUntil: 'networkidle' });
+check('AI設定: 保存した優先順が再読込後も残る',
+  (await page.locator('[data-provider]').evaluateAll(els => els.map(e => e.dataset.provider)))[0] === 'openrouter');
 
 // Successful AI flows use deterministic browser fixtures; no live model is called.
 let gradeCalls = 0;
@@ -380,7 +398,7 @@ let releaseTutor;
 await page.route('**/api/physics-tutor', async route => {
   tutorCalls++;
   if (tutorCalls === 2) await new Promise(resolve => { releaseTutor = resolve; });
-  await route.fulfill({ contentType: 'text/event-stream', body: 'data: {"text":"ストリーム回答 $x^2$"}\n\ndata: {"done":true}\n\ndata: [DONE]\n\n' }).catch(() => {});
+  await route.fulfill({ contentType: 'text/event-stream', body: 'data: {"provider":"ollama","label":"Ollama（ローカル）","model":"qwen-test"}\n\ndata: {"text":"ストリーム回答 $x^2$"}\n\ndata: {"done":true}\n\ndata: [DONE]\n\n' }).catch(() => {});
 });
 await page.goto(BASE + '/physics/tutor', { waitUntil: 'networkidle' });
 await page.locator('textarea').fill('日本語入力の変換中');
@@ -390,8 +408,10 @@ await page.getByRole('button', { name: '送信', exact: true }).click();
 await page.getByText('ストリーム回答', { exact: false }).waitFor();
 await page.getByRole('button', { name: '送信', exact: true }).waitFor();
 check('チューター: 回答の数式を描画', await page.locator('.katex').count() > 0);
+check('チューター: どのモデルが答えたかを表示', (await page.locator('[data-role="answered-by"]').first().textContent()) === 'Ollama（ローカル） · qwen-test');
 await page.reload({ waitUntil: 'networkidle' });
 await page.getByText('ストリーム回答', { exact: false }).waitFor();
+check('チューター: 再読込後も回答モデルの表示が残る', await page.locator('[data-role="answered-by"]').count() === 1);
 check('チューター: 完了した会話を再読込できる', await page.getByText('ストリーム回答', { exact: false }).count() > 0);
 await page.locator('textarea').fill('消去する会話');
 await page.getByRole('button', { name: '送信', exact: true }).click();

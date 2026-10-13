@@ -10,6 +10,7 @@ const ITEMS = [
   { href: '/physics/lab', label: '量子ラボ', icon: '⊗' },
   { href: '/physics/tutor', label: 'チューター', icon: '✦' },
   { href: '/physics/practice', label: '演習', icon: '✎' },
+  { href: '/physics/ai', label: 'AI設定', icon: '⚙' },
 ];
 
 export default function PhysicsNav() {

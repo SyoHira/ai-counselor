@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { POST as tutor } from '../app/api/physics-tutor/route.js';
 import { POST as problem } from '../app/api/physics-problem/route.js';
 import { readTutorStream } from '../lib/physics/tutorStream.js';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+// 使用量の記録と設定はテストごとの一時ディレクトリへ。他の接続先のキーは無いものとする
+process.env.AI_DATA_DIR = mkdtempSync(join(tmpdir(), 'physics-ai-'));
+for (const k of ['GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'OLLAMA_MODEL', 'OLLAMA_BASE_URL', 'GEMINI_MODEL', 'OPENROUTER_MODEL', 'ANTHROPIC_MODEL']) delete process.env[k];
 
 const request = body => new Request('http://localhost/api/physics', {
   method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),

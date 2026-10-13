@@ -10,6 +10,7 @@ import { logSession } from '@/lib/physics/progress';
 import { Card, Badge, levelTone } from '@/components/physics/ui';
 import RichText from '@/components/physics/RichText';
 import { readTutorStream } from '@/lib/physics/tutorStream';
+import AiPicker, { AnsweredBy, useAiProvider } from '@/components/physics/AiPicker';
 
 const STORE_KEY = 'physics.tutor.v1';
 
@@ -26,7 +27,8 @@ function loadThreads() {
     const data = JSON.parse(window.localStorage.getItem(STORE_KEY) || '{}');
     if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
     const threads = Object.fromEntries(Object.entries(data).filter(([, messages]) => Array.isArray(messages))
-      .map(([key, messages]) => [key, messages.filter(m => m && ['user', 'assistant'].includes(m.role) && typeof m.content === 'string').slice(-24)]));
+      .map(([key, messages]) => [key, messages.filter(m => m && ['user', 'assistant'].includes(m.role) && typeof m.content === 'string').slice(-24)
+        .map(({ role, content, by }) => (by && typeof by.label === 'string' && typeof by.model === 'string' ? { role, content, by: { label: by.label, model: by.model } } : { role, content }))]));
     for (const [oldId, id] of Object.entries(MODULE_ID_ALIASES)) {
       // A deliberately cleared canonical thread must not resurrect old messages.
       if (!Object.hasOwn(threads, id) && Object.hasOwn(threads, oldId)) threads[id] = threads[oldId];
@@ -64,6 +66,8 @@ function TutorInner() {
   const [streaming, setStreaming] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const ai = useAiProvider();
   const bottomRef = useRef(null);
   const abortRef = useRef(null);
   const threadKey = moduleId || 'general';
@@ -86,6 +90,7 @@ function TutorInner() {
     if (!content || abortRef.current) return;
     setInput('');
     setError('');
+    setNotice('');
     const next = [...messages, { role: 'user', content }];
     setMessages(next);
     setStreaming(true);
@@ -98,7 +103,7 @@ function TutorInner() {
       const res = await fetch('/api/physics-tutor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next.filter(m => m.content.trim()).slice(-24).map(m => ({ ...m, content: m.content.slice(0, 8000) })), level, mode, moduleId, ...(problemId ? { problemId } : {}) }),
+        body: JSON.stringify({ messages: next.filter(m => m.content.trim()).slice(-24).map(m => ({ role: m.role, content: m.content.slice(0, 8000) })), level, mode, moduleId, provider: ai.provider, ...(problemId ? { problemId } : {}) }),
         signal: controller.signal,
       });
       if (abortRef.current !== controller) return;
@@ -109,20 +114,23 @@ function TutorInner() {
       }
 
       let acc = '';
+      let by = null;
       setMessages([...next, { role: 'assistant', content: '' }]);
 
       await readTutorStream(res.body, obj => {
           if (abortRef.current !== controller) return;
           if (obj.phase === 'thinking') { setThinking(true); return; }
+          if (obj.fallback) { setNotice(`${obj.fallback} が使えなかったため、次の接続先に切り替えました。`); return; }
+          if (obj.provider) { by = { label: obj.label, model: obj.model }; return; }
           if (obj.text) {
             setThinking(false);
             acc += obj.text;
-            setMessages([...next, { role: 'assistant', content: acc }]);
+            setMessages([...next, { role: 'assistant', content: acc, by }]);
           }
       });
       if (abortRef.current !== controller) return;
 
-      const finalMessages = [...next, { role: 'assistant', content: acc }];
+      const finalMessages = [...next, { role: 'assistant', content: acc, by }];
       setMessages(finalMessages);
       saveThread(threadKey, finalMessages);
       logSession({ type: 'tutor', moduleId: moduleId || null, level, mode });
@@ -196,6 +204,7 @@ function TutorInner() {
       )}
 
       <div className="space-y-2">
+        <AiPicker {...ai} disabled={streaming} />
         <div className="flex flex-wrap gap-1.5">
           {LEVELS.map((l) => (
             <button
@@ -252,12 +261,14 @@ function TutorInner() {
             ) : (
               <Card className="p-4 text-[12.5px]">
                 {m.content ? <RichText text={m.content} /> : <ThinkingDots label="考えています" />}
+                {m.content && <AnsweredBy by={m.by} />}
               </Card>
             )}
           </div>
         ))}
 
         {streaming && thinking && messages[messages.length - 1]?.content === '' && null}
+        {notice && <p className="text-[11px] text-amberq">{notice}</p>}
         {error && (
           <div className="rounded-xl border border-plasma/40 bg-plasma/10 px-3.5 py-2.5 text-[12px] text-plasma">
             {error}

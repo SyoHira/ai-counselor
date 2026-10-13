@@ -9,6 +9,7 @@ import { problemsFor, pickProblems, DIFFICULTY, PROBLEM_STATS } from '@/lib/phys
 import { recordAttempt, getModuleProgress, loadProgress, logSession, dueForReview } from '@/lib/physics/progress';
 import { Card, SectionTitle, Button, Badge, levelTone } from '@/components/physics/ui';
 import RichText from '@/components/physics/RichText';
+import AiPicker, { AnsweredBy, useAiProvider } from '@/components/physics/AiPicker';
 import ProblemCard from '@/components/physics/ProblemCard';
 
 // 演習ページ。既定は「問題集」（教材に組み込まれた問題。APIキー不要でその場で採点・解説）。
@@ -150,6 +151,8 @@ function AiPractice({ moduleId, setModuleId }) {
   const [grading, setGrading] = useState('');
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(null);
+  const [generatedBy, setGeneratedBy] = useState(null);
+  const ai = useAiProvider();
   const requestRef = useRef(null);
   const busy = loading || Boolean(grading);
 
@@ -180,12 +183,13 @@ function AiPractice({ moduleId, setModuleId }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ action: 'generate', moduleId, level, difficulty, count: 3 }),
+        body: JSON.stringify({ action: 'generate', moduleId, level, difficulty, count: 3, provider: ai.provider }),
       });
       const data = await res.json();
       if (requestRef.current !== controller) return;
       if (!res.ok) throw new Error(data.message || `エラー (${res.status})`);
       setProblems(data.problems || []);
+      setGeneratedBy(data.by || null);
       logSession({ type: 'practice', moduleId: moduleId || null, level, difficulty });
     } catch (e) {
       if (requestRef.current === controller && e.name !== 'AbortError') setError(e.message || '問題の生成に失敗しました。');
@@ -207,7 +211,7 @@ function AiPractice({ moduleId, setModuleId }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ action: 'grade', question: p.question, answer: p.answer, explanation: p.explanation, userAnswer, level }),
+        body: JSON.stringify({ action: 'grade', question: p.question, answer: p.answer, explanation: p.explanation, userAnswer, level, provider: ai.provider }),
       });
       const data = await res.json();
       if (requestRef.current !== controller) return;
@@ -261,6 +265,7 @@ function AiPractice({ moduleId, setModuleId }) {
             </button>
           ))}
         </div>
+        <AiPicker {...ai} disabled={busy} />
         <div className="flex items-center gap-3 pt-1">
           <Button variant="primary" onClick={generate} disabled={busy}>
             {loading ? '生成中…' : '問題を作る（3問）'}
@@ -278,6 +283,7 @@ function AiPractice({ moduleId, setModuleId }) {
         <div className="rounded-xl border border-plasma/40 bg-plasma/10 px-3.5 py-2.5 text-[12px] text-plasma">{error}</div>
       )}
 
+      {problems.length > 0 && <AnsweredBy by={generatedBy && { ...generatedBy, label: `出題: ${generatedBy.label}` }} />}
       {problems.map((p, i) => {
         const result = results[p.id];
         return (
@@ -340,6 +346,7 @@ function AiPractice({ moduleId, setModuleId }) {
                 <p className="text-[10.5px] text-quantum">添削</p>
                 <RichText text={result.feedback} className="text-[12.5px]" />
                 {result.misconception && <p className="text-[11.5px] text-amberq">典型的な誤解：{result.misconception}</p>}
+                <AnsweredBy by={result.by && { ...result.by, label: `添削: ${result.by.label}` }} />
               </div>
             )}
             {revealed[p.id] && (
