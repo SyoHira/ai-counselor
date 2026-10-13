@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { checkStudioAuth } from '@/lib/affiliate/auth';
+import { generateJson, LlmError } from '@/lib/engine/llm.mjs';
+import { checkStudioAuth } from '@/lib/affiliate/auth.mjs';
 import {
-  studioSystemPrompt,
   selectSchema,
   selectPrompt,
   painsSchema,
@@ -10,11 +10,9 @@ import {
   postsPrompt,
   reviewSchema,
   reviewPrompt,
-} from '@/lib/affiliate/prompts';
+} from '@/lib/affiliate/prompts.mjs';
 
 export const maxDuration = 300;
-
-const MODEL = process.env.STUDIO_MODEL || 'claude-opus-5-5';
 
 function clip(value, max) {
   return typeof value === 'string' ? value.slice(0, max) : '';
@@ -86,14 +84,6 @@ export async function POST(request) {
     return Response.json({ error: 'UNAUTHORIZED', message: auth.message }, { status: 401 });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || apiKey === 'your-api-key-here') {
-    return Response.json(
-      { error: 'API_KEY_NOT_CONFIGURED', message: 'ANTHROPIC_API_KEY が設定されていません。' },
-      { status: 503 }
-    );
-  }
-
   let body;
   try {
     body = await request.json();
@@ -106,36 +96,15 @@ export async function POST(request) {
     return Response.json({ error: 'INVALID_REQUEST', message: '入力が足りません。' }, { status: 400 });
   }
 
-  const client = new Anthropic({ apiKey });
-
   try {
-    // 投稿30本分の長い出力でもタイムアウトしないよう stream → finalMessage
-    const message = await client.beta.messages
-      .stream({
-        model: MODEL,
-        max_tokens: 32000,
-        betas: ['server-side-fallback-2026-07-01'],
-        fallbacks: 'default',
-        system: studioSystemPrompt,
-        output_config: {
-          effort: 'medium',
-          format: { type: 'json_schema', schema: built.schema },
-        },
-        messages: [{ role: 'user', content: built.prompt }],
-      })
-      .finalMessage();
-
-    if (message.stop_reason === 'refusal') {
-      return Response.json({ error: 'REFUSAL', message: 'この内容は生成できませんでした。入力を見直してください。' }, { status: 422 });
-    }
-    if (message.stop_reason === 'max_tokens') {
-      return Response.json({ error: 'TOO_LONG', message: '出力が長すぎました。件数を減らしてください。' }, { status: 422 });
-    }
-
-    const text = message.content.find((b) => b.type === 'text')?.text ?? '';
-    return Response.json({ result: JSON.parse(text), usage: message.usage });
+    const { result, usage } = await generateJson(built);
+    return Response.json({ result, usage });
   } catch (error) {
     console.error('Studio API error:', error?.message || error);
+    if (error instanceof LlmError) {
+      const status = error.code === 'API_KEY_NOT_CONFIGURED' ? 503 : 422;
+      return Response.json({ error: error.code, message: error.message }, { status });
+    }
     if (error instanceof Anthropic.AuthenticationError) {
       return Response.json({ error: 'AUTH_ERROR', message: 'APIキーが無効です。' }, { status: 401 });
     }

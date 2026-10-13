@@ -1,0 +1,55 @@
+# 自動運転のスケジューラ。デプロイ先の /api/cron/<job> を叩くだけ。
+# リポジトリの Settings → Secrets に ENGINE_URL（例 https://andon.example.com）と CRON_SECRET を入れると動く。
+# publish の時刻は SLOT_CANDIDATES（既定 JST 07:00 07:45 12:10 12:40 18:30 20:00 21:00 22:00 23:00）の各2分後。
+# SLOT_CANDIDATES を変えたらここも合わせる。GitHub の定期実行は数分〜十数分遅れることがある。
+name: engine-cron
+
+on:
+  schedule:
+    - cron: '2 22 * * *'
+    - cron: '47 22 * * *'
+    - cron: '12 3 * * *'
+    - cron: '42 3 * * *'
+    - cron: '32 9 * * *'
+    - cron: '2 11 * * *'
+    - cron: '2 12 * * *'
+    - cron: '2 13 * * *'
+    - cron: '2 14 * * *'
+    - cron: '7 */6 * * *'    # metrics
+    - cron: '23 18 * * *'    # daily（JST 3:23）
+    - cron: '41 19 * * 1'    # report（JST 月曜 4:41）
+    - cron: '53 19 * * 3'    # refresh-token（JST 木曜 4:53）
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'job name'
+        required: true
+        default: daily
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Pick job
+        id: pick
+        run: |
+          case "${{ github.event.schedule }}" in
+            '') job='${{ inputs.job }}' ;;
+            '7 */6 * * *') job=metrics ;;
+            '23 18 * * *') job=daily ;;
+            '41 19 * * 1') job=report ;;
+            '53 19 * * 3') job=refresh-token ;;
+            *) job=publish ;;
+          esac
+          echo "job=$job" >> "$GITHUB_OUTPUT"
+      - name: Call engine
+        env:
+          ENGINE_URL: ${{ secrets.ENGINE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$ENGINE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "ENGINE_URL / CRON_SECRET が未設定のためスキップ"
+            exit 0
+          fi
+          curl -fsS --max-time 300 -X POST -H "Authorization: Bearer $CRON_SECRET" "$ENGINE_URL/api/cron/${{ steps.pick.outputs.job }}"

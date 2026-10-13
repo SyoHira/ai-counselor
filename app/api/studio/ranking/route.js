@@ -1,5 +1,5 @@
-import { checkStudioAuth } from '@/lib/affiliate/auth';
-import { fetchRanking, rankingToText } from '@/lib/affiliate/rakuten';
+import { checkStudioAuth } from '@/lib/affiliate/auth.mjs';
+import { fetchRanking, rankingToText } from '@/lib/affiliate/rakuten.mjs';
 
 export async function GET(request) {
   const auth = checkStudioAuth(request);
