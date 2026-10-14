@@ -26,3 +26,15 @@ test('Amazon 商品は価格に触れない', () => {
   assert.ok(ruleCheck('3,980円で買える\n#PR', { network: 'amazon' }).some((i) => i.includes('価格')));
   assert.deepEqual(ruleCheck('3,980円で買える\n#PR', { network: 'rakuten' }), []);
 });
+
+test('高単価案件: カテゴリ別ルールと金額', () => {
+  const base = { network: 'asp', experienced: false };
+  assert.ok(ruleCheck('会社と交渉してくれる\n#PR', { ...base, category: '退職代行' }).some((i) => i.includes('退職代行')));
+  assert.ok(ruleCheck('年収が必ず上がる\n#PR', { ...base, category: '転職エージェント' }).some((i) => i.includes('転職')));
+  assert.ok(ruleCheck('必ず出会える\n#PR', { ...base, category: '婚活・結婚相談所' }).some((i) => i.includes('婚活')));
+  assert.ok(ruleCheck('うつが改善する\n#PR', { ...base, category: 'オンラインカウンセリング' }).some((i) => i.includes('医療')));
+  assert.ok(ruleCheck('初回3,000円\n#PR', { ...base, category: 'コーチング' }).some((i) => i.includes('金額')));
+  assert.deepEqual(ruleCheck('話すだけで整理できることもある\n#PR', { ...base, category: 'オンラインカウンセリング' }), []);
+  assert.ok(ruleCheck('気軽に始められる\n#PR', { ...base, category: 'マッチングアプリ' }).some((i) => i.includes('18歳未満')));
+  assert.deepEqual(ruleCheck('気軽に始められる\n※18歳未満は利用できません\n#PR', { ...base, category: 'マッチングアプリ' }), []);
+});

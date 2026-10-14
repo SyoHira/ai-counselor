@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export const PATCH = studioHandler(async (request) => {
   const { id, action, text } = await request.json();
   const post = await one(
-    'select po.*, p.network, p.experienced from posts po join products p on p.id = po.product_id where po.id = $1',
+    'select po.*, p.network, p.experienced, p.category from posts po join products p on p.id = po.product_id where po.id = $1',
     [id]
   );
   if (!post) throw badRequest('post not found');

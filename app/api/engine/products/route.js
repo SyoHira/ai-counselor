@@ -1,6 +1,6 @@
 import { query, one } from '@/lib/engine/db.mjs';
 import { amazonLink } from '@/lib/engine/sources/amazon.mjs';
-import { config } from '@/lib/engine/config.mjs';
+import { config, segmentFor } from '@/lib/engine/config.mjs';
 import { studioHandler, badRequest } from '@/lib/engine/http.mjs';
 
 export const dynamic = 'force-dynamic';
@@ -28,13 +28,14 @@ export const POST = studioHandler(async (request) => {
   }
 
   const row = await one(
-    `insert into products (network, external_id, name, price, url, category, pain, experienced, tracking_id, commission_rate, status, activated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, $11, case when $11 = 'active' then now() end)
+    `insert into products (network, external_id, name, price, url, category, pain, experienced, tracking_id, commission_rate, status, activated_at, segment)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, $11, case when $11 = 'active' then now() end, $12)
      on conflict (network, external_id) do update set name = excluded.name, url = excluded.url, price = excluded.price,
-       pain = excluded.pain, experienced = excluded.experienced, tracking_id = excluded.tracking_id
+       pain = excluded.pain, experienced = excluded.experienced, tracking_id = excluded.tracking_id, segment = excluded.segment
      returning id`,
     [network, externalId, name, Number(b.price) || 0, url, String(b.category ?? ''), String(b.pain ?? ''), Boolean(b.experienced),
-      trackingId, Number(b.commissionRate) || 0, b.activate ? 'active' : 'candidate']
+      trackingId, Number(b.commissionRate) || 0, b.activate ? 'active' : 'candidate',
+      segmentFor(`${b.category ?? ''} ${name} ${b.pain ?? ''}`)]
   );
   return { id: row.id };
 });

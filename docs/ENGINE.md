@@ -1,6 +1,6 @@
 # Andon Engine — アフィリエイト自動運転
 
-楽天・Amazon の商品を、Threads で毎日自動的に紹介し、実績データから「どの商品を・どの切り口で・何時に出すか」を学習し続ける仕組み。
+楽天・Amazon の商品と高単価のASP案件を、Threads・LINE公式・自社ガイドページで自動的に紹介し、実績データから「どの商品を・どの切り口で・何時に出すか」を学習し続ける仕組み。
 手動で回す `/studio` に対して、`/studio/engine` は人がやることを「承認」と「成果CSVの取り込み」だけに絞る。
 
 ## 全体の流れ
@@ -19,7 +19,7 @@
 
 | ジョブ | 内容 |
 |---|---|
-| `ingest` | 楽天ランキングAPI（ジャンル別）と Amazon PA-API（キーワード検索）から候補を取得し、順位のスナップショットを毎日保存 |
+| `ingest` | 楽天ランキングAPI（ジャンル別）と Amazon Creators API（キーワード検索）から候補を取得し、順位のスナップショットを毎日保存 |
 | `portfolio` | 十分見られたのに「最も稼ぐ確率」が2%未満の商品を停止。空いた枠を、統計スコア上位の候補から Claude が悩みと結びつく商品を選んで補充 |
 | `generate` | 配信中の商品ごとに悩みを30個作り、在庫が減ったら5本ずつ投稿を生成。ルール判定 → AI判定を通ったものだけ承認（または承認待ち） |
 | `schedule` | 3日先まで、1日3枠を埋める。時刻と商品をそれぞれ Thompson sampling で選び、同じ日に同じ商品は出さない |
@@ -27,6 +27,25 @@
 | `metrics` | 公開から21日以内の投稿の閲覧・いいね・返信・リポスト・引用・シェアを取得 |
 | `report` | 統計を集計し、Claude が結論と来週の打ち手をまとめる |
 | `refresh-token` | Threads の長期トークンを更新（60日で失効するため週1） |
+| `research-offers` | 高単価案件を Web 検索で調べ、報酬・成果条件・承認率・SNS可否・法令上の注意を構造化し、期待値で並べる（週1） |
+| `line-steps` | LINE の悩み別ステップ配信。本文が無ければ生成・判定し、承認済みの本文を日数が来た友だちへ一括送信（daily に含む） |
+| `guides` | 悩み別ガイドページ（`/guide/sleep` `/work` `/love` `/mind`）を、配信中の商品・案件から生成（週1。公開中のページは自動で書き換えない） |
+
+チャネルの選定理由と市場調査は `docs/STRATEGY.md`。
+
+## 高単価案件（ASP）
+
+1. `research-offers` が候補を「高単価案件」タブに並べる（根拠URLは検索結果に実在したものだけ残す）。
+2. 各ASPで提携申請する（自動化しない。規約上も人が行う）。
+3. 発行されたアフィリエイトURLを入れて「配信開始」。CPA 案件は「単価 = 報酬、料率 = 承認率」として同じ期待報酬モデルに乗る。
+4. SNS掲載不可の案件はガイドページ専用（Threads・LINE には出ない）。成果はASPのCSVを「ASP」で取り込む（案件名で紐づけ）。
+
+## LINE公式アカウント
+
+- Webhook: `<PUBLIC_BASE_URL>/api/line/webhook`（署名検証あり）。友だち追加 → 悩みを4択で選ぶ → 1・3・7・14日後にステップ配信。
+- 自由文には Andon の AI が200字以内で返答（1日 `LINE_AI_DAILY_LIMIT` 回まで）。希死念慮のサインを含む言葉には、AI より先に相談窓口を返す（`lib/engine/crisis.mjs`）。
+- **LINE には広告リンクを出さない**。ガイドページへのリンクだけを送る（ASP のクローズド配布禁止・Amazon の規約に合わせるため）。
+- 無料プランの月間メッセージ数には上限があるので、友だちが増えたら料金プランを見直す。ステップ配信は1人あたり4通。
 
 ## データサイエンス（`lib/engine/stats.mjs`, `lib/engine/analytics.mjs`）
 
@@ -62,10 +81,12 @@ Amazon はリダイレクトを挟まず `amazon.co.jp/dp/ASIN?tag=<トラッキ
 1. **DB**: 本番は Postgres（Neon / Supabase の無料枠で足りる）。`DATABASE_URL` を設定すると初回アクセス時にテーブルを作る。未設定ならローカルの PGlite（`.data/pglite`）。Vercel などサーバーレスでは PGlite のデータが消えるので必ず Postgres を使う。
 2. **Threads**: Meta for Developers でアプリを作り Threads API を追加 → 自分のアカウントをテスターにして `threads_basic` / `threads_content_publish` / `threads_manage_insights` の長期トークンを発行 → `THREADS_USER_ID` / `THREADS_ACCESS_TOKEN`。
 3. **楽天**: 楽天ウェブサービスのアプリID と アフィリエイトID → `RAKUTEN_APP_ID` / `RAKUTEN_AFFILIATE_ID`。
-4. **Amazon**: アソシエイトに登録し、トラッキングIDを複数作る → `AMAZON_TRACKING_IDS`。PA-API は売上実績が必要なので、それまでは「取込・登録」から ASIN を手動登録する。使えるようになったら `AMAZON_ACCESS_KEY` / `AMAZON_SECRET_KEY` / `AMAZON_PARTNER_TAG`。
-5. **公開**: `PUBLIC_BASE_URL`, `STUDIO_PASSWORD`, `CRON_SECRET` を設定してデプロイ。
-6. **定期実行**: GitHub リポジトリの Secrets に `ENGINE_URL`（公開URL）と `CRON_SECRET` を入れる。`.github/workflows/engine-cron.yml` が `/api/cron/<job>` を叩く。未設定の間はスキップするだけ。実行は1日15回前後（月450分程度）で、非公開リポジトリの無料枠に収まる。投稿時刻の候補 `SLOT_CANDIDATES` を変えたら workflow の publish 時刻も合わせる。
-7. 最初は `AUTO_PUBLISH=false` のまま、キューを見て承認する。投稿の質と判定の精度に納得できたら `true` にする。
+4. **Amazon**: アソシエイトに登録し、トラッキングIDを複数作る → `AMAZON_TRACKING_IDS`。Creators API は直近30日で10件以上の適格売上が必要なので、それまでは「取込・登録」から ASIN を手動登録する。使えるようになったら `AMAZON_CREDENTIAL_ID` / `AMAZON_CREDENTIAL_SECRET` / `AMAZON_PARTNER_TAG`（Creators API は価格を返さないため、期待値計算には目安価格を使う）。
+5. **LINE**: LINE Developers で Messaging API チャネルを作成 → `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_ACCESS_TOKEN`、Webhook URL を設定し、応答メッセージ（自動応答）はオフにする。
+6. **ASP**: A8.net・もしも・バリューコマース・afb・アクセストレードなどに登録し、SNS掲載の事前登録が必要なASP（バリューコマース等）には Threads アカウントを登録しておく。
+7. **公開**: `PUBLIC_BASE_URL`, `STUDIO_PASSWORD`, `CRON_SECRET` を設定してデプロイ。
+8. **定期実行**: GitHub リポジトリの Secrets に `ENGINE_URL`（公開URL）と `CRON_SECRET` を入れる。`.github/workflows/engine-cron.yml` が `/api/cron/<job>` を叩く。未設定の間はスキップするだけ。実行は1日15回前後（月450分程度）で、非公開リポジトリの無料枠に収まる。投稿時刻の候補 `SLOT_CANDIDATES` を変えたら workflow の publish 時刻も合わせる。
+9. 最初は `AUTO_PUBLISH=false` のまま、キューを見て承認する。投稿の質と判定の精度に納得できたら `true` にする。
 
 ローカル: `npm run dev` → http://localhost:3000/studio/engine 、ジョブ単体は `node --env-file=.env.local scripts/engine.mjs daily`、テストは `npm test`。
 
@@ -80,6 +101,7 @@ Amazon はリダイレクトを挟まず `amazon.co.jp/dp/ASIN?tag=<トラッキ
 
 ## 未検証の部分
 
-- 実際の Claude API・楽天API・Threads API・PA-API には接続していない（テストはすべてモック）。PA-API の署名は参照実装（aws4）と一致を確認済み。
+- 実際の Claude API（Web検索を含む）・楽天API・Threads API・LINE Messaging API・Amazon Creators API には接続していない（テストはすべてモック）。Creators API のエンドポイントと項目名は公開SDKの資料ベースで、最初の接続時に応答を確認する。
+- 楽天ウェブサービスは2026年にエンドポイントが openapi.rakuten.co.jp に変わり、アクセスキーとRefererが必須になったという個人の報告がある（公式の告知は未確認）。ランキング取得が失敗したら楽天の開発者ページで仕様を確認する。
 - `DATABASE_URL`（postgres.js）経路は未実行。テストは PGlite で通している。
 - Amazon のカテゴリ別紹介料率は既定 3% にしている。実際の料率表に合わせて `AMAZON_DEFAULT_RATE` を設定する。

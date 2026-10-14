@@ -18,14 +18,17 @@ Object.assign(process.env, {
 const calls = { llm: [], threads: [] };
 let mediaSeq = 0;
 
-function sse(json) {
-  const text = JSON.stringify(json);
+function sse(json, { blocks = null, stopReason = 'end_turn' } = {}) {
+  const text = typeof json === 'string' ? json : JSON.stringify(json);
+  const content = blocks ?? [{ type: 'text', text: '' }];
   const events = [
     ['message_start', { type: 'message_start', message: { id: 'msg', type: 'message', role: 'assistant', model: 'm', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } }],
-    ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],
-    ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }],
-    ['content_block_stop', { type: 'content_block_stop', index: 0 }],
-    ['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 10 } }],
+    ...content.flatMap((block, index) => [
+      ['content_block_start', { type: 'content_block_start', index, content_block: block }],
+      ...(block.type === 'text' ? [['content_block_delta', { type: 'content_block_delta', index, delta: { type: 'text_delta', text } }]] : []),
+      ['content_block_stop', { type: 'content_block_stop', index }],
+    ]),
+    ['message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: 10 } }],
     ['message_stop', { type: 'message_stop' }],
   ];
   return new Response(events.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join(''), {
@@ -55,6 +58,14 @@ function fakeClaude(prompt) {
     const n = (prompt.match(/^\[\d+\]$/gm) ?? []).length;
     return { results: Array.from({ length: n }, (_, index) => ({ index, ok: index !== 1, issues: index === 1 ? ['煽り'] : [] })) };
   }
+  if (prompt.includes('調査メモ')) {
+    return {
+      offers: [
+        { asp: 'A8.net', program: '退職代行X', advertiser: 'X社', rewardYen: 15000, rewardNote: '2026年10月時点', condition: '申込', approvalRate: 0.6, snsAllowed: true, restrictions: '', fit: 5, pain: '会社に行くのがつらい', riskNotes: '労組運営', sourceUrls: ['https://asp.example/x', 'https://fabricated.example'] },
+        { asp: 'afb', program: '転職Y', advertiser: 'Y社', rewardYen: 20000, rewardNote: '', condition: '面談', approvalRate: null, snsAllowed: false, restrictions: 'SNS不可', fit: 4, pain: '', riskNotes: '', sourceUrls: [] },
+      ],
+    };
+  }
   if (prompt.includes('週次データ')) return { headline: 'h', findings: ['f'], actions: ['a'] };
   throw new Error(`unexpected prompt: ${prompt.slice(0, 80)}`);
 }
@@ -64,6 +75,17 @@ globalThis.fetch = async (input, init = {}) => {
   if (url.includes('api.anthropic.com')) {
     const body = JSON.parse(init.body);
     calls.llm.push(body);
+    if (body.tools?.some((t) => t.type === 'web_search_20260209')) {
+      // 1回目は pause_turn、続きの依頼で end_turn を返す
+      const resumed = body.messages.length > 1;
+      return sse(resumed ? '退職代行Xは報酬15,000円、SNS可。' : '', {
+        stopReason: resumed ? 'end_turn' : 'pause_turn',
+        blocks: [
+          { type: 'web_search_tool_result', tool_use_id: 'srvtoolu_1', content: [{ type: 'web_search_result', url: 'https://asp.example/x', title: 'X', encrypted_content: 'e', page_age: null }] },
+          { type: 'text', text: '' },
+        ],
+      });
+    }
     return sse(fakeClaude(body.messages[0].content));
   }
   if (url.includes('app.rakuten.co.jp')) {
@@ -169,6 +191,40 @@ test('portfolio: 十分な閲覧で負けが確定した商品は停止して補
   assert.equal(loser.status, 'retired');
   const leftovers = await query(`select count(*)::int as n from posts where product_id = $1 and status in ('approved','scheduled','draft')`, [products[0].id]);
   assert.equal(leftovers[0].n, 0);
+});
+
+test('research-offers: Web検索（途中停止→再開）→ 構造化 → 期待値', async () => {
+  process.env.OFFER_CATEGORIES = '退職代行';
+  const summary = await runJob('research-offers');
+  assert.equal(summary.found, 2);
+  const searchCalls = calls.llm.filter((c) => c.tools?.length);
+  assert.equal(searchCalls.length, 2, 'pause_turn の後に続きを依頼する');
+  assert.equal(searchCalls[1].messages.at(-1).role, 'assistant', '続きの依頼は応答をそのまま足すだけ');
+
+  const offers = await query('select * from offers order by expected_value desc');
+  const x = offers.find((o) => o.program === '退職代行X');
+  assert.equal(x.expected_value, 15000 * 0.6 * 1);
+  assert.deepEqual(x.sources, ['https://asp.example/x'], '検索結果に無いURLは捨てる');
+  assert.equal(offers.find((o) => o.program === '転職Y').expected_value, 20000 * 0.5 * 0.8 * 0.5, 'SNS不可はガイド専用として半分');
+  assert.equal(x.segment, 'work');
+});
+
+test('activateOffer: URLを入れると配信商品になり、SNS不可はガイド専用', async () => {
+  const { activateOffer } = await import('../lib/engine/jobs/offers.mjs');
+  const [x] = await query(`select id from offers where program = '退職代行X'`);
+  const [y] = await query(`select id from offers where program = '転職Y'`);
+  await assert.rejects(activateOffer(y.id, 'http://insecure'), /https/);
+  const guideOnly = await activateOffer(y.id, 'https://px.a8.net/y');
+  assert.equal(guideOnly.channels, 'guide');
+  const { productId } = await activateOffer(x.id, 'https://px.a8.net/x');
+  const [p] = await query('select * from products where id = $1', [productId]);
+  assert.equal(p.network, 'asp');
+  assert.equal(p.status, 'active');
+  assert.equal(p.price, 15000);
+  assert.ok(Math.abs(p.commission_rate - 0.6) < 1e-6);
+  assert.equal(p.category, '退職代行');
+  assert.equal(p.channels, 'threads,guide');
+  assert.equal(p.segment, 'work');
 });
 
 test('job_runs に履歴が残る', async () => {

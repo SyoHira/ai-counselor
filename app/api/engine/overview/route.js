@@ -35,6 +35,19 @@ export const GET = studioHandler(async () => {
      from posts po join products p on p.id = po.product_id left join post_metrics m on m.post_id = po.id
      where po.status = 'published' order by po.published_at desc limit 50`
   );
+  const offers = await query(
+    `select * from offers order by case status when 'active' then 0 when 'applied' then 1 when 'discovered' then 2 else 3 end, expected_value desc limit 200`
+  );
+  const lineUsers = await query(
+    `select coalesce(nullif(segment, ''), '未選択') as segment, count(*) filter (where not blocked)::int as active,
+       count(*) filter (where blocked)::int as blocked from line_users group by 1 order by 1`
+  );
+  const lineSteps = await query('select * from line_steps order by segment, step');
+  const guides = await query(
+    `select g.slug, g.segment, g.title, g.status, g.compliance, g.views, g.updated_at,
+       (select count(*) from clicks c where c.slug = 'guide:' || g.slug)::int as clicks
+     from guides g order by g.slug`
+  );
   const runs = await query('select job, status, summary, started_at, finished_at from job_runs order by id desc limit 20');
 
   return {
@@ -49,6 +62,9 @@ export const GET = studioHandler(async () => {
     priors: { ctr: model.ctrPrior, cvr: model.cvrPrior },
     queue: queue.map((q) => ({ ...q, link: q.link_slug ? linkFor(q, q, cfg) : null })),
     recent,
+    offers,
+    line: { users: lineUsers, steps: lineSteps },
+    guides,
     runs,
     report: await getSetting('last_report'),
   };

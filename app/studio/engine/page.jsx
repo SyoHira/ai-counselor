@@ -8,6 +8,9 @@ const TABS = [
   { id: 'queue', label: 'キュー' },
   { id: 'recent', label: '実績' },
   { id: 'analysis', label: '分析' },
+  { id: 'offers', label: '高単価案件' },
+  { id: 'line', label: 'LINE' },
+  { id: 'guides', label: 'ガイド' },
   { id: 'import', label: '取込・登録' },
 ];
 
@@ -17,6 +20,11 @@ const STATUS_LABEL = {
   approved: '承認済み',
   scheduled: '予約済み',
   failed: '失敗',
+  discovered: '発見',
+  published: '公開中',
+  applied: '申請中',
+  rejected: '不採用',
+  ended: '終了',
   active: '配信中',
   candidate: '候補',
   retired: '停止',
@@ -25,6 +33,8 @@ const STATUS_LABEL = {
 const inputClass =
   'w-full bg-white rounded-xl px-3 py-2 text-sm border border-stone/60 focus:outline-none focus:border-charcoal/30 placeholder:text-charcoal/30';
 
+const SEGMENT_LABEL = { sleep: '眠り', work: '仕事・燃え尽き', love: '恋愛・婚活', mind: '不安・自己肯定感' };
+const NETWORK_LABEL = { amazon: 'Amazon', rakuten: '楽天', asp: 'ASP' };
 const pct = (v, digits = 2) => `${(v * 100).toFixed(digits)}%`;
 const yen = (v) => `¥${Math.round(v).toLocaleString()}`;
 const dt = (v) =>
@@ -133,6 +143,11 @@ export default function EnginePage() {
 
   const runJob = (job) => act(job, () => api('/api/engine/run', { method: 'POST', body: { job } }));
   const postAction = (id, action, text) => act(action, () => api('/api/engine/posts', { method: 'PATCH', body: { id, action, text } }));
+  const [offerUrls, setOfferUrls] = useState({});
+  const offerAction = (id, action, affiliateUrl) =>
+    act('案件更新', () => api('/api/engine/offers', { method: 'PATCH', body: { id, action, affiliateUrl } }));
+  const lineAction = (id, action, text) => act('LINE', () => api('/api/engine/line', { method: 'PATCH', body: { id, action, text } }));
+  const guideAction = (slug, action) => act('ガイド', () => api('/api/engine/guides', { method: 'PATCH', body: { slug, action } }));
   const productAction = (id, body) => act('商品更新', () => api('/api/engine/products', { method: 'PATCH', body: { id, ...body } }));
 
   const savePassword = (v) => {
@@ -156,7 +171,7 @@ export default function EnginePage() {
           </Link>
           <div>
             <h1 className="text-base font-semibold text-charcoal tracking-tight">Andon Engine</h1>
-            <p className="text-[11px] text-charcoal/40">楽天 / Amazon アフィリエイト 自動運転</p>
+            <p className="text-[11px] text-charcoal/40">Threads × LINE × ガイド アフィリエイト自動運転</p>
           </div>
         </div>
         <div className="flex gap-2 items-center">
@@ -195,7 +210,7 @@ export default function EnginePage() {
             <span className="px-2 py-0.5 rounded-full bg-warm">リンク: {data.config.linkMode === 'reply' ? '返信に付ける' : 'プロフィールのみ'}</span>
             <span className="px-2 py-0.5 rounded-full bg-warm">1日 {data.config.postsPerDay} 本 / 配信 {data.config.activeProducts} 商品</span>
             <span className="ml-auto flex gap-1.5">
-              {['daily', 'publish', 'metrics', 'report'].map((job) => (
+              {['daily', 'publish', 'metrics', 'report', 'guides'].map((job) => (
                 <Button key={job} variant="secondary" disabled={!!busy} onClick={() => runJob(job)}>
                   {job} を実行
                 </Button>
@@ -245,7 +260,7 @@ export default function EnginePage() {
                   <td className="p-3 max-w-[260px]">
                     <div className="truncate font-medium" title={p.name}>{p.name}</div>
                     <div className="text-charcoal/50 truncate">
-                      {p.network === 'amazon' ? 'Amazon' : '楽天'} ・ {p.price ? yen(p.price) : '価格不明'}
+                      {NETWORK_LABEL[p.network]} ・ {p.price ? yen(p.price) : '価格不明'}
                       {p.latestRank ? ` ・ ${p.latestRank}位` : ''}
                       {p.rankPoints > 1 ? ` (${p.rankVelocity < 0 ? '↑' : '↓'}${Math.abs(p.rankVelocity * 100).toFixed(0)}%/日)` : ''}
                     </div>
@@ -289,7 +304,7 @@ export default function EnginePage() {
               <Card key={q.id} className={q.status === 'flagged' || q.status === 'failed' ? '!border-red-300' : ''}>
                 <div className="flex flex-wrap gap-2 text-[11px] text-charcoal/50 mb-2">
                   <span className="px-2 py-0.5 rounded-full bg-warm text-charcoal">{STATUS_LABEL[q.status]}</span>
-                  <span>{q.network === 'amazon' ? 'Amazon' : '楽天'} ・ {q.product}</span>
+                  <span>{NETWORK_LABEL[q.network]} ・ {q.product}</span>
                   {q.hook_type && <span>型: {q.hook_type}</span>}
                   {q.slot_at && <span>予定: {dt(q.slot_at)}</span>}
                 </div>
@@ -439,6 +454,157 @@ export default function EnginePage() {
         </div>
       )}
 
+
+      {data && tab === 'offers' && (
+        <div className="space-y-3">
+          <Card>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex-1 min-w-[240px]">
+                <h2 className="text-sm font-semibold">高単価案件の自動リサーチ</h2>
+                <p className="text-[11px] text-charcoal/50">
+                  毎週 Web 検索で ASP 案件を調べ、期待値（報酬 × 承認率 × 読者との相性）で並べます。提携申請は各ASPで行い、発行されたアフィリエイトURLを入れると配信対象になります。SNS掲載不可の案件は自社ガイドページだけに載せます（Threads・LINE には出しません）。
+                </p>
+              </div>
+              <Button disabled={!!busy} onClick={() => runJob('research-offers')}>今すぐリサーチ</Button>
+            </div>
+          </Card>
+          {data.offers.map((o) => (
+            <Card key={o.id} className={o.status === 'rejected' || o.status === 'ended' ? 'opacity-50' : ''}>
+              <div className="flex flex-wrap justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap gap-2 items-center text-[11px] text-charcoal/50">
+                    <span className="px-2 py-0.5 rounded-full bg-warm text-charcoal">{STATUS_LABEL[o.status] ?? o.status}</span>
+                    <span>{o.category}</span>
+                    <span>{o.asp}</span>
+                    {o.sns_allowed === false && <span className="text-red-700">SNS不可（ガイドのみ）</span>}
+                    {o.sns_allowed === null && <span>SNS可否 不明（要確認）</span>}
+                  </div>
+                  <p className="text-sm font-medium mt-1">{o.program}{o.advertiser && o.advertiser !== o.program ? `（${o.advertiser}）` : ''}</p>
+                  <p className="text-xs text-charcoal/70">
+                    報酬 {o.reward_yen ? yen(o.reward_yen) : '不明'} ・ 承認率 {o.approval_rate != null ? pct(o.approval_rate, 0) : '不明'} ・ 相性 {o.fit}/5 ・ 条件: {o.condition || '不明'}
+                  </p>
+                  {o.reward_note && <p className="text-[11px] text-charcoal/50">{o.reward_note}</p>}
+                  {o.pain && <p className="text-xs mt-1">「{o.pain}」</p>}
+                  {o.restrictions && <p className="text-[11px] text-charcoal/60 mt-1">制限: {o.restrictions}</p>}
+                  {o.risk_notes && <p className="text-[11px] text-red-700 mt-1">注意: {o.risk_notes}</p>}
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {o.sources.map((u) => (
+                      <a key={u} href={u} target="_blank" rel="noreferrer" className="text-[11px] underline text-charcoal/50 truncate max-w-[220px]">
+                        {u.replace(/^https?:\/\//, '')}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-lg font-semibold tabular-nums">{yen(o.expected_value)}</div>
+                  <div className="text-[11px] text-charcoal/50" title="報酬 × 承認率 × 相性/5">1件あたり期待値</div>
+                </div>
+              </div>
+              {['discovered', 'applied'].includes(o.status) && (
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <input
+                    value={offerUrls[o.id] ?? ''}
+                    onChange={(e) => setOfferUrls({ ...offerUrls, [o.id]: e.target.value })}
+                    placeholder="提携後のアフィリエイトURL"
+                    className={`${inputClass} flex-1 min-w-[200px]`}
+                  />
+                  <Button disabled={!!busy || !offerUrls[o.id]} onClick={() => offerAction(o.id, 'activate', offerUrls[o.id])}>配信開始</Button>
+                  {o.status === 'discovered' && <Button variant="secondary" onClick={() => offerAction(o.id, 'applied')}>申請済みにする</Button>}
+                  <Button variant="secondary" onClick={() => offerAction(o.id, 'reject')}>使わない</Button>
+                </div>
+              )}
+              {o.status === 'active' && (
+                <div className="mt-3">
+                  <Button variant="secondary" onClick={() => offerAction(o.id, 'end')}>配信終了</Button>
+                </div>
+              )}
+            </Card>
+          ))}
+          {!data.offers.length && <p className="text-sm text-charcoal/50">まだ案件がありません。「今すぐリサーチ」を実行してください。</p>}
+        </div>
+      )}
+
+
+      {data && tab === 'line' && (
+        <div className="space-y-3">
+          <Card>
+            <h2 className="text-sm font-semibold">友だち</h2>
+            <p className="text-[11px] text-charcoal/50 mb-2">
+              友だち追加 → 悩みを選ぶ → {'1・3・7・14'}日後にステップ配信。自由文には AI が返答（1日の回数制限あり）。希死念慮を含む言葉には相談窓口を先に返します。LINE には広告リンクを出さず、ガイドページへ案内します。
+            </p>
+            <div className="flex flex-wrap gap-2 text-xs">
+              {data.line.users.map((u) => (
+                <span key={u.segment} className="px-2 py-1 rounded-lg bg-warm">
+                  {SEGMENT_LABEL[u.segment] ?? u.segment}: {u.active}人{u.blocked ? `（ブロック ${u.blocked}）` : ''}
+                </span>
+              ))}
+              {!data.line.users.length && <span className="text-charcoal/50">まだ友だちがいません</span>}
+            </div>
+          </Card>
+          {data.line.steps.map((st) => {
+            const draft = editing[`line-${st.id}`];
+            const issues = st.compliance?.issues ?? [];
+            return (
+              <Card key={st.id} className={st.status === 'flagged' ? '!border-red-300' : ''}>
+                <div className="flex flex-wrap gap-2 text-[11px] text-charcoal/50 mb-2">
+                  <span className="px-2 py-0.5 rounded-full bg-warm text-charcoal">{STATUS_LABEL[st.status] ?? st.status}</span>
+                  <span>{SEGMENT_LABEL[st.segment] ?? st.segment} ・ {st.step + 1}通目 ・ {st.day_offset}日後</span>
+                  {st.guide_slug && <span>ガイドへのリンク付き</span>}
+                  <span>送信 {st.sent_count}</span>
+                </div>
+                {draft !== undefined ? (
+                  <textarea rows={6} value={draft} onChange={(e) => setEditing({ ...editing, [`line-${st.id}`]: e.target.value })} className={inputClass} />
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap">{st.text}</p>
+                )}
+                {issues.length > 0 && <ul className="text-[11px] text-red-700 mt-2 list-disc pl-4">{issues.map((i) => <li key={i}>{i}</li>)}</ul>}
+                <div className="flex gap-2 mt-3">
+                  {draft !== undefined ? (
+                    <Button onClick={() => lineAction(st.id, 'edit', draft).then(() => setEditing(({ [`line-${st.id}`]: _, ...rest }) => rest))}>保存して再判定</Button>
+                  ) : (
+                    <>
+                      {st.status === 'draft' && <Button onClick={() => lineAction(st.id, 'approve')}>承認</Button>}
+                      <Button variant="secondary" onClick={() => setEditing({ ...editing, [`line-${st.id}`]: st.text })}>編集</Button>
+                      {st.step === 0 && <Button variant="secondary" onClick={() => lineAction(st.id, 'regenerate')}>この悩みの全通を作り直す</Button>}
+                    </>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
+          {!data.line.steps.length && <p className="text-sm text-charcoal/50">本文はまだありません。daily（または line-steps）を実行すると生成されます。</p>}
+        </div>
+      )}
+
+      {data && tab === 'guides' && (
+        <div className="space-y-3">
+          {data.guides.map((g) => {
+            const issues = g.compliance?.issues ?? [];
+            return (
+              <Card key={g.slug} className={g.status === 'flagged' ? '!border-red-300' : ''}>
+                <div className="flex flex-wrap gap-2 text-[11px] text-charcoal/50 mb-1">
+                  <span className="px-2 py-0.5 rounded-full bg-warm text-charcoal">{STATUS_LABEL[g.status] ?? g.status}</span>
+                  <span>/guide/{g.slug}</span>
+                  <span>閲覧 {g.views} ・ 商品クリック {g.clicks}</span>
+                  <span>更新 {dt(g.updated_at)}</span>
+                </div>
+                <p className="text-sm font-medium">{g.title}</p>
+                {issues.length > 0 && <ul className="text-[11px] text-red-700 mt-2 list-disc pl-4">{issues.map((i) => <li key={i}>{i}</li>)}</ul>}
+                <div className="flex gap-2 mt-3">
+                  {g.status !== 'published' && <Button disabled={issues.length > 0} onClick={() => guideAction(g.slug, 'publish')}>公開</Button>}
+                  {g.status === 'published' && (
+                    <a href={`/guide/${g.slug}`} target="_blank" rel="noreferrer" className="px-3 py-1.5 rounded-xl text-xs bg-warm border border-stone/60">ページを見る</a>
+                  )}
+                  {g.status === 'published' && <Button variant="secondary" onClick={() => guideAction(g.slug, 'unpublish')}>非公開</Button>}
+                  <Button variant="secondary" onClick={() => guideAction(g.slug, 'regenerate')}>次回作り直す</Button>
+                </div>
+              </Card>
+            );
+          })}
+          {!data.guides.length && <p className="text-sm text-charcoal/50">ガイドはまだありません。guides を実行すると、悩み別に4ページ作られます。</p>}
+        </div>
+      )}
+
       {data && tab === 'import' && (
         <div className="grid md:grid-cols-2 gap-3">
           <Card>
@@ -450,6 +616,7 @@ export default function EnginePage() {
               <select value={conv.network} onChange={(e) => setConv({ ...conv, network: e.target.value })} className={inputClass}>
                 <option value="amazon">Amazon</option>
                 <option value="rakuten">楽天</option>
+                <option value="asp">ASP（高単価案件）</option>
               </select>
               <input type="date" value={conv.periodStart} onChange={(e) => setConv({ ...conv, periodStart: e.target.value })} className={inputClass} />
               <input type="date" value={conv.periodEnd} onChange={(e) => setConv({ ...conv, periodEnd: e.target.value })} className={inputClass} />

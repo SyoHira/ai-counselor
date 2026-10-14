@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 // 成果レポート CSV を期間付きで取り込む。キーは商品コード / ASIN / トラッキングID
 export const POST = studioHandler(async (request) => {
   const { network, periodStart, periodEnd, csv } = await request.json();
-  if (!['rakuten', 'amazon'].includes(network)) throw badRequest('network は rakuten / amazon');
+  if (!['rakuten', 'amazon', 'asp'].includes(network)) throw badRequest('network は rakuten / amazon / asp');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart ?? '') || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd ?? '')) throw badRequest('期間を指定してください');
   if (!csv?.trim()) throw badRequest('CSVが空です');
 
@@ -21,7 +21,7 @@ export const POST = studioHandler(async (request) => {
   let matched = 0;
   for (const r of mapped.rows) {
     const [product] = await query(
-      `select id from products where network = $1 and (external_id = $2 or (tracking_id <> '' and tracking_id = $2)) limit 1`,
+      `select id from products where network = $1 and (external_id = $2 or (tracking_id <> '' and tracking_id = $2) or ($1 = 'asp' and name = $2)) limit 1`,
       [network, r.key]
     );
     if (product) matched++;

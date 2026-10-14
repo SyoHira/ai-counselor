@@ -16,8 +16,10 @@ on:
     - cron: '2 13 * * *'
     - cron: '2 14 * * *'
     - cron: '7 */6 * * *'    # metrics
-    - cron: '23 18 * * *'    # daily（JST 3:23）
+    - cron: '23 18 * * *'    # daily（JST 3:23。LINE ステップ配信も含む）
     - cron: '41 19 * * 1'    # report（JST 月曜 4:41）
+    - cron: '11 20 * * 1'    # research-offers（JST 月曜 5:11）
+    - cron: '29 20 * * 2'    # guides（JST 火曜 5:29）
     - cron: '53 19 * * 3'    # refresh-token（JST 木曜 4:53）
   workflow_dispatch:
     inputs:
@@ -39,6 +41,8 @@ jobs:
             '7 */6 * * *') job=metrics ;;
             '23 18 * * *') job=daily ;;
             '41 19 * * 1') job=report ;;
+            '11 20 * * 1') job=research-offers ;;
+            '29 20 * * 2') job=guides ;;
             '53 19 * * 3') job=refresh-token ;;
             *) job=publish ;;
           esac
