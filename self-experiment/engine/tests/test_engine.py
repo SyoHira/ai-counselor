@@ -260,3 +260,17 @@ def test_example_pipeline_runs_with_domain_variables():
     assert "mood" not in res.confounders and "alcohol" in res.confounders
     assert {r.key for r in res.secondary} >= {"rhr", "rmssd", "tst"}
     assert res.cycle_overlap is not None and res.cycle_overlap < 0.3
+
+
+def test_missed_dose_lowers_exposure():
+    from n1engine.domain.pk import PK, daily_exposure, window_for
+
+    pk = PK(t_half_h=24.0, tmax_h=2.0)
+    day = np.arange(1, 15)
+    treat = (day <= 10).astype(int)
+    taken = np.ones(14)
+    full = daily_exposure(day, treat, pk, 8.0, window_for("day"), taken=taken)
+    taken[5] = 0  # 6日目に飲み忘れ
+    miss = daily_exposure(day, treat, pk, 8.0, window_for("day"), taken=taken)
+    assert miss[5] < full[5] * 0.7
+    assert np.allclose(miss[:5], full[:5])

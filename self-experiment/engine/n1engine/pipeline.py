@@ -75,7 +75,7 @@ def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, 
     timing = (var.timing if var and var.timing else None) or timing
     w = window_for(timing, bedtime, waketime)
     if substance is not None and substance.pk is not None:
-        exposure = daily_exposure(d["day"], d["treat"], substance.pk, dose_hour, w, d.get("dose_hour"))
+        exposure = daily_exposure(d["day"], d["treat"], substance.pk, dose_hour, w, d.get("dose_hour"), d.get("taken"))
     else:
         exposure = d["treat"].astype(float)
     y_raw = transformed(key, d[key])

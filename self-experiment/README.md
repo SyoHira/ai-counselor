@@ -26,12 +26,13 @@
 | [docs/03-marketing.md](docs/03-marketing.md) | SNS、量子の出し方、守ること |
 | [docs/04-compliance.md](docs/04-compliance.md) | 規制の整理と、出品前に確認すること |
 | [docs/05-research.md](docs/05-research.md) | 研究層（量子認知の検証）と、最新研究の取り込み方 |
+| [form/](form/) | 毎日の記録フォーム（claude.ai のアーティファクトとして公開。記録は作成者だけが読み書きでき、分析エンジンの CSV 形式で書き出す） |
 | [engine/](engine/) | 分析エンジン（Python）。しくみの解説は [engine/README.md](engine/README.md)、検証結果は [engine/CALIBRATION.md](engine/CALIBRATION.md) |
 
 ## 順番
 
 1. **自分が最初の被験者になる。** 今飲んでいるサプリで、まず7日間の普段通りの記録をつけ、`engine` の `plan` で自分に必要な日数を出す
-2. 毎日の記録フォームを作り、エンジンとつなぐ（今は CSV で動く）
+2. 記録フォーム（`form/`）で毎日記録し、書き出した CSV をエンジンにかける。今のフォームは自分用（作成者だけが記録できる）。お客さん向けは別に用意する
 3. 出品前の確認を済ませる（[docs/04-compliance.md](docs/04-compliance.md) の未確認事項）
 4. ココナラに出品する
 5. 記録が溜まったら研究層を動かす

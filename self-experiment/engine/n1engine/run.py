@@ -17,6 +17,8 @@ CSVの列（項目の意味・役割は n1engine/domain/variables.py）
   体の反応    mood, stress, sleep, sol, waso, tst, tib, se, rhr, rmssd（あれば参考として出す）
   外部要因    alcohol, coffee, offday, sick, cycle_day（あれば補正に使う）
   dose_hour  実際に飲んだ時刻（21.5 = 21時30分）
+  taken      飲む日に実際に飲んだか（1/0）。0 の日は体内量に入れない
+  記録フォーム（self-experiment/form/）の書き出しはこの形式になっている
   belief     中身を隠す上級版のみ。今日は本物を飲んだと思う=1 / 思わない=0
   夜の項目（睡眠・睡眠中の心拍など）は翌朝に書くが、その日の行に入れる。
 """
@@ -38,7 +40,7 @@ from .pipeline import _scale, analyze
 from .report import render
 from .simulate import plan_length
 
-TEXT_COLUMNS = ("phase", "pair_order")
+TEXT_COLUMNS = ("phase", "pair_order", "rating_order", "date")
 
 
 def load(path: str) -> dict[str, np.ndarray]:

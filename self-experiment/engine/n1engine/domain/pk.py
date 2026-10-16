@@ -161,11 +161,14 @@ def daily_exposure(
     dose_hour: float,
     w: Window,
     dose_hours: np.ndarray | None = None,
+    taken: np.ndarray | None = None,
 ) -> np.ndarray:
     """記録した各日の曝露量（定常状態=1.0）。
 
     day, treat は記録のある日だけでよい（抜けた日は前後から補う）。
     dose_hours に実際に飲んだ時刻が入っていればそれを使い、無い日は予定の dose_hour を使う。
+    taken が 0 の日（飲む日に飲み忘れた日）は、その日の分を体内量に入れない。
+    判定は「飲む日」「飲まない日」の割り付けのまま行い、体内量だけを実際に合わせる。
     """
     day = np.asarray(day, dtype=int)
     full, t = fill_phases(day, treat)
@@ -175,7 +178,10 @@ def daily_exposure(
         for d, h in zip(day, dh):
             if not np.isnan(h):
                 hours[d - 1] = h
-    doses = np.array([(d - 1) * 24 + hours[d - 1] for d in full if t[d - 1] == 1])
+    skip = set()
+    if taken is not None:
+        skip = {int(d) for d, k in zip(day, np.asarray(taken, dtype=float)) if k == 0}
+    doses = np.array([(d - 1) * 24 + hours[d - 1] for d in full if t[d - 1] == 1 and d not in skip])
 
     ref = steady_window_mean(pk, dose_hour, w)
     out = np.zeros(len(day))
