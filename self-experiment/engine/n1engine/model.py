@@ -2,10 +2,17 @@
 
 何をしているか
   その日の記録 = 基準値
-               + 飲んだ日の上乗せ（これを知りたい）
+               + 差 × その日の曝露量（これを知りたい）
                + 時間の流れによる変化
-               + その日の気分・ストレス・睡眠の影響
+               + 外部要因（飲酒・休日・体調不良・月経周期の時期など）の影響
                + 揺れ
+
+  曝露量は、成分の体内動態から計算した「記録の時間帯に体に残っている量」
+  （飲み続けて安定した状態=1.0、domain/pk.py）。体内動態の分からない成分は
+  飲んだ日=1・飲まない日=0。どちらでも「差」は飲み続けて安定したときの差になる。
+
+  気分・ストレス・睡眠など飲んだことで動きうる記録は、補正に使わない（v0.2.0）。
+  補正に入れると、それを通じて生じた差まで消してしまうため（CALIBRATION.md の検証）。
 
   揺れは「前日の揺れを一部引きずる」と考える（自己相関）。
   毎日の体調は前日の状態を持ち越すので、普通の比較（t検定）をそのまま使うと
@@ -28,7 +35,8 @@ import numpy as np
 
 # 事前の前提（事前分布）。実験の前に決めて固定し、レポートに書く。途中で変えない。
 DEFAULT_PRIORS = {
-    # 飲んだ日の上乗せ：「たぶん差はない、あっても±2点程度」という控えめな前提
+    # 差（飲み続けて安定したときの差）：「たぶん差はない、あっても±2点程度」という控えめな前提。
+    # 0〜10 の自己評価を想定した値。分や拍/分の項目では、その項目のばらつきに合わせて広げる（run.py）
     "treatment_sd": 2.0,
     # 基準値：0〜10の記録の真ん中あたり、幅広く
     "intercept_mean": 5.0,
@@ -54,30 +62,54 @@ class Fit:
     sigma_draws: np.ndarray
     n_used: int  # 推定に使えた日のペア数
     priors: dict = field(default_factory=dict)
+    diag: dict | None = None  # fit_chains のときの収束診断
 
     def draws(self, name: str) -> np.ndarray:
         return self.beta_draws[:, self.names.index(name)]
 
 
 def _standardize(x: np.ndarray) -> np.ndarray:
+    """平均0・ばらつき1にそろえる。空欄は平均（=0）で埋める。
+
+    v0.1.0 では外部要因が1つ空欄なだけでその日を丸ごと捨て、前後の日のペアも失っていた。
+    """
+    x = np.asarray(x, dtype=float)
     sd = np.nanstd(x)
     if sd == 0 or np.isnan(sd):
         return np.zeros_like(x)
-    return (x - np.nanmean(x)) / sd
+    return np.nan_to_num((x - np.nanmean(x)) / sd, nan=0.0)
 
 
 def build_design(
     day: np.ndarray,
-    treat: np.ndarray,
+    exposure: np.ndarray,
     covariates: dict[str, np.ndarray] | None = None,
 ) -> tuple[np.ndarray, list[str]]:
-    """説明に使う変数の表（設計行列）を作る。気分などは標準化してそろえる。"""
-    cols = [np.ones_like(day, dtype=float), treat.astype(float), _standardize(day.astype(float))]
+    """説明に使う変数の表（設計行列）を作る。
+
+    exposure は曝露量（0〜1程度）または 0/1。外部要因は標準化してそろえる。
+    """
+    cols = [np.ones_like(day, dtype=float), np.asarray(exposure, dtype=float), _standardize(day.astype(float))]
     names = ["intercept", "treatment", "trend"]
     for name, values in (covariates or {}).items():
         cols.append(_standardize(np.asarray(values, dtype=float)))
         names.append(name)
     return np.column_stack(cols), names
+
+
+def prepare(y, X, day):
+    """記録の無い日を除いて日付順に並べ、前日がそろっている日のペアを作る。"""
+    y = np.asarray(y, dtype=float)
+    X = np.asarray(X, dtype=float)
+    day = np.asarray(day)
+    ok = ~np.isnan(y) & ~np.isnan(X).any(axis=1)
+    y, X, day = y[ok], X[ok], day[ok]
+    order = np.argsort(day)
+    y, X, day = y[order], X[order], day[order]
+    pair = np.where(np.diff(day) == 1)[0]
+    if len(pair) < X.shape[1] + 2:
+        raise ValueError(f"連続した記録が足りません（{len(pair)}組）")
+    return y, X, day, pair + 1, pair
 
 
 def fit(
@@ -89,23 +121,12 @@ def fit(
     n_draws: int = 3000,
     n_burn: int = 1000,
     seed: int | None = None,
+    jitter: bool = False,
 ) -> Fit:
-    """自己相関つきベイズ回帰をギブスサンプリングで推定する。"""
+    """自己相関つきベイズ回帰をギブスサンプリングで推定する（1本）。"""
     pr = {**DEFAULT_PRIORS, **(priors or {})}
     rng = np.random.default_rng(seed)
-
-    y = np.asarray(y, dtype=float)
-    day = np.asarray(day)
-    ok = ~np.isnan(y) & ~np.isnan(X).any(axis=1)
-    y, X, day = y[ok], X[ok], day[ok]
-    order = np.argsort(day)
-    y, X, day = y[order], X[order], day[order]
-
-    # 前日の記録がそろっているペアだけを使う
-    pair = np.where(np.diff(day) == 1)[0]
-    cur, prev = pair + 1, pair
-    if len(pair) < X.shape[1] + 2:
-        raise ValueError(f"連続した記録が足りません（{len(pair)}組）")
+    y, X, day, cur, prev = prepare(y, X, day)
 
     k = X.shape[1]
     b0 = np.zeros(k)
@@ -119,6 +140,10 @@ def fit(
     beta = np.linalg.lstsq(X, y, rcond=None)[0]
     sigma2 = float(np.var(y - X @ beta)) or 1.0
     rho = 0.0
+    if jitter:  # 出発点をばらして、複数本が同じ答えに落ち着くかを見る（収束診断）
+        beta = beta + rng.normal(0, 1, k)
+        sigma2 *= float(np.exp(rng.normal(0, 0.5)))
+        rho = float(rng.uniform(-0.5, 0.9))
 
     total = n_draws + n_burn
     beta_out = np.empty((n_draws, k))
@@ -156,6 +181,50 @@ def fit(
             sig_out[j] = np.sqrt(sigma2)
 
     return Fit(names, beta_out, rho_out, sig_out, len(cur), pr)
+
+
+N_CHAINS = 4
+
+
+def fit_chains(
+    y: np.ndarray,
+    X: np.ndarray,
+    day: np.ndarray,
+    names: list[str],
+    priors: dict | None = None,
+    n_chains: int = N_CHAINS,
+    n_draws: int = 1000,
+    n_burn: int = 1000,
+    seed: int = 0,
+) -> Fit:
+    """出発点を変えた複数本を走らせてまとめる。diag に収束診断（R̂・ESS）が入る。"""
+    from .diagnostics import check
+
+    fits = [fit(y, X, day, names, priors, n_draws, n_burn, seed=seed * 100 + c, jitter=True) for c in range(n_chains)]
+    f = Fit(
+        names,
+        np.vstack([g.beta_draws for g in fits]),
+        np.concatenate([g.rho_draws for g in fits]),
+        np.concatenate([g.sigma_draws for g in fits]),
+        fits[0].n_used,
+        fits[0].priors,
+    )
+    j = names.index("treatment")
+    f.diag = {
+        "treatment": check(np.array([g.beta_draws[:, j] for g in fits])),
+        "rho": check(np.array([g.rho_draws for g in fits])),
+        "n_chains": n_chains,
+        "n_draws": n_draws,
+    }
+    return f
+
+
+def gls_estimate(y, X, day, rho: float, j: int) -> float:
+    """引きずりの強さを rho に固定したときの、j 番目の係数の最小二乗推定（偶然との比較に使う）。"""
+    y, X, day, cur, prev = prepare(y, X, day)
+    ys = y[cur] - rho * y[prev]
+    Xs = X[cur] - rho * X[prev]
+    return float(np.linalg.lstsq(Xs, ys, rcond=None)[0][j])
 
 
 @dataclass

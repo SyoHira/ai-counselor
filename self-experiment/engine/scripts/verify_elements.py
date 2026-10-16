@@ -11,6 +11,13 @@
   design    7日×4期間を折り返す並び（ABBA）と、前半後半に分ける並び（AABB）の比較
   carry     効果が出るまで・消えるまでに数日かかるとき（持ち越し）の見落とし
 
+  v0.2.0 で追加
+  pkcarry   半減期2日の成分：0/1で数える場合と曝露量で数える場合、半減期を半分／倍に誤った場合
+  cycle     月経周期で記録が動くとき：28日（補正なし／あり）と56日の並び
+  nullcal   偶然との比較（補正後の差が基準）が、差ゼロのとき5%前後で「20回に1回以下」を出すか
+  units     分・拍/分・対数の項目（カフェイン15時の設定）で、推定が偏らず幅が正しいか
+  mediator2 v0.2.0 の既定の流れで、気分を通じた差が消えないか
+
 結果は JSON で書き出す。CALIBRATION.md に転記するときはこの出力を使う。
 推定の回数は検証用（1000回）。本番（3000回）より少ない。
 """
@@ -29,9 +36,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from n1engine.design import make_schedule  # noqa: E402
+from n1engine.domain.pk import PK, daily_exposure, window_for  # noqa: E402
+from n1engine.domain.substances import SUBSTANCES  # noqa: E402
+from n1engine.domain.variables import cycle_terms  # noqa: E402
 from n1engine.model import build_design, fit, verdict  # noqa: E402
+from n1engine.pipeline import analyze  # noqa: E402
 from n1engine.run import load  # noqa: E402
-from n1engine.simulate import ar1_noise, fake_experiment  # noqa: E402
+from n1engine.simulate import ar1_noise, fake_experiment, null_check  # noqa: E402
 
 N_DRAWS, N_BURN = 1000, 500
 
@@ -150,7 +161,7 @@ def exp_nullalt(n):
     return out
 
 
-POWER_BLOCKS = (7, 10, 14)
+POWER_BLOCKS = (7, 14)
 SEED0 = 0
 
 
@@ -265,6 +276,133 @@ def exp_carry(n):
     return out
 
 
+def exp_pkcarry(n):
+    """本当の半減期48時間（持ち越しあり）。数え方ごとの推定・検出・幅の正しさ。"""
+    true = PK(48.0, 2.0)
+    w = window_for("day")
+    models = {"01": None, "pk_true": true, "pk_half": PK(24.0, 2.0), "pk_double": PK(96.0, 2.0)}
+    out = {}
+    for effect in (0.0, 1.0):
+        acc = {m: {"est": [], "p": [], "cover": []} for m in models}
+        for s in range(n):
+            day, treat, y, _ = fake_experiment(effect, rho=0.5, sigma=1.0, seed=70_000 + s, pk=true, window=w)
+            for m, pk in models.items():
+                ex = treat.astype(float) if pk is None else daily_exposure(day, treat, pk, 8.0, w)
+                X, names = build_design(day, ex)
+                v = verdict(quick_fit(y, X, day, names, s))
+                acc[m]["est"].append(v.effect_mean)
+                acc[m]["p"].append(v.p_better)
+                acc[m]["cover"].append(v.effect_low <= effect <= v.effect_high)
+        out[f"effect{effect:g}"] = {
+            m: {"mean_est": float(np.mean(a["est"])), "ge95": float(np.mean(np.array(a["p"]) >= 0.95)), "cover": float(np.mean(a["cover"]))}
+            for m, a in acc.items()
+        }
+    out["n"] = n
+    out["true_t_half_h"] = 48.0
+    return out
+
+
+def exp_cycle(n):
+    """月経周期で記録が ±1点動く（周期28日・始まりはランダム）。差ゼロと差1点。"""
+    out = {}
+    designs = (("28_noadj", "ABBA", False), ("28_adj", "ABBA", True), ("56_adj", "ABABBABA", True))
+    for effect in (0.0, 1.0):
+        for name, base_seq, adj in designs:
+            est, ps, cover, width = [], [], [], []
+            for s in range(n):
+                rng = np.random.default_rng(80_000 + s)
+                seq = base_seq if s % 2 == 0 else base_seq.translate(str.maketrans("AB", "BA"))
+                treat = np.repeat([1 if c == "B" else 0 for c in seq], 7)
+                m = len(treat)
+                day = np.arange(1, m + 1)
+                start = int(rng.integers(0, 28))
+                cd = (np.arange(m) + start) % 28 + 1
+                y = 5 + effect * treat + 1.0 * np.sin(2 * np.pi * (cd - 1) / 28) + ar1_noise(m, 0.5, 1.0, rng)
+                X, names = build_design(day, treat, cycle_terms(cd, 28) if adj else None)
+                v = verdict(quick_fit(y, X, day, names, s))
+                est.append(v.effect_mean)
+                ps.append(v.p_better)
+                cover.append(v.effect_low <= effect <= v.effect_high)
+                width.append(v.effect_high - v.effect_low)
+            out[f"{name}_effect{effect:g}"] = {
+                "mean_est": float(np.mean(est)),
+                "sd_est": float(np.std(est)),
+                "ge95": float(np.mean(np.array(ps) >= 0.95)),
+                "cover": float(np.mean(cover)),
+                "width": float(np.mean(width)),
+            }
+    out["n"] = n
+    out["cycle_amplitude"] = 1.0
+    return out
+
+
+def exp_nullcal(n):
+    """差ゼロ（時間の流れ+3点・外部要因あり）で、偶然との比較が「20回に1回以下」を出す割合。"""
+    rates = []
+    for s in range(n):
+        rng = np.random.default_rng(90_000 + s)
+        day, treat, y, _ = fake_experiment(0.0, rho=0.5, sigma=1.0, drift=3.0, seed=90_000 + s)
+        alc = rng.integers(0, 3, len(day)).astype(float)
+        y = y + 0.4 * alc
+        X, names = build_design(day, treat, {"alcohol": alc})
+        f = quick_fit(y, X, day, names, s)
+        v = verdict(f)
+        r = null_check(y, X, day, names, v.rho_mean, float(f.sigma_draws.mean()), n_sims=400, seed=s)
+        rates.append(r["rate"] if r["side"] > 0 else 1.0)
+    a = np.array(rates)
+    return {"n": n, "le05": float(np.mean(a <= 0.05)), "le10": float(np.mean(a <= 0.10))}
+
+
+def exp_units(n):
+    """カフェイン15時の設定（examples/make_example.py と同じ形、28日）。単位のある項目の推定。"""
+    caf = SUBSTANCES["caffeine"]
+    truth = {"sol": 8.0, "tst": -12.0, "rhr": 1.5, "rmssd": float(np.log(0.94))}
+    acc = {k: {"est": [], "cover": []} for k in truth}
+    for s in range(n):
+        rng = np.random.default_rng(95_000 + s)
+        days = make_schedule(seed=95_000 + s)
+        m = len(days)
+        day = np.array([d.day for d in days])
+        treat = np.array([1 if d.phase == "B" else 0 for d in days])
+        ex = daily_exposure(day, treat, caf.pk, 15.0, window_for("night"))
+        offday = np.isin((day - 1) % 7, (5, 6)).astype(float)
+        alcohol = rng.choice([0, 0, 0, 1, 2], m).astype(float)
+        d = {
+            "day": day, "treat": treat, "alcohol": alcohol, "offday": offday,
+            "sol": 18 + 8 * ex - 2 * alcohol - 3 * offday + ar1_noise(m, 0.4, 5.0, rng),
+            "tst": 420 - 12 * ex + ar1_noise(m, 0.3, 25, rng),
+            "rhr": 58 + 1.5 * ex + 1.5 * alcohol + ar1_noise(m, 0.5, 1.2, rng),
+            "rmssd": np.exp(np.log(45) + np.log(0.94) * ex + ar1_noise(m, 0.5, 0.12, rng)),
+        }
+        r = analyze(d, primary="sol", substance=caf, dose_hour=15, n_draws=300, null_sims=20, seed=s)
+        allr = {r.primary.key: r.primary, **{x.key: x for x in r.secondary}}
+        for k, t in truth.items():
+            o = allr[k]
+            sign = o.direction or 1
+            lo, hi = sorted((o.v.effect_low * sign, o.v.effect_high * sign))
+            acc[k]["est"].append(o.v.effect_mean * sign)
+            acc[k]["cover"].append(lo <= t <= hi)
+    return {"n": n, **{k: {"truth": truth[k], "mean_est": float(np.mean(a["est"])), "cover": float(np.mean(a["cover"]))} for k, a in acc.items()}}
+
+
+def exp_mediator2(n):
+    """exp_mediator と同じ偽データを、v0.2.0 の既定の流れ（気分は参考項目、補正しない）で分析する。"""
+    est, ps = [], []
+    for s in range(n):
+        rng = np.random.default_rng(30_000 + s)
+        days = make_schedule(seed=30_000 + s)
+        m = len(days)
+        day = np.array([d.day for d in days])
+        treat = np.array([1 if d.phase == "B" else 0 for d in days])
+        mood = np.clip(5 + 1.0 * treat + rng.normal(0, 1.2, m), 0, 10)
+        y = np.clip(5 + 0.5 * treat + 0.5 * (mood - 5) + ar1_noise(m, 0.5, 0.9, rng), 0, 10)
+        r = analyze({"day": day, "treat": treat, "outcome": y, "mood": mood}, n_draws=300, null_sims=20, seed=s, secondary=False)
+        assert "mood" not in r.confounders
+        est.append(r.primary.v.effect_mean)
+        ps.append(r.primary.v.p_better)
+    return {"n": n, "true_total": 1.0, "mean_est": float(np.mean(est)), "ge95": float(np.mean(np.array(ps) >= 0.95))}
+
+
 EXPERIMENTS = {
     "example": (exp_example, 1),
     "nullalt": (exp_nullalt, 200),
@@ -273,6 +411,11 @@ EXPERIMENTS = {
     "ceiling": (exp_ceiling, 100),
     "design": (exp_design, 100),
     "carry": (exp_carry, 100),
+    "pkcarry": (exp_pkcarry, 100),
+    "cycle": (exp_cycle, 100),
+    "nullcal": (exp_nullcal, 200),
+    "units": (exp_units, 60),
+    "mediator2": (exp_mediator2, 60),
 }
 
 

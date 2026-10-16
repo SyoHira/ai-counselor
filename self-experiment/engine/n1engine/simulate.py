@@ -10,7 +10,8 @@ from __future__ import annotations
 import numpy as np
 
 from .design import make_schedule
-from .model import build_design, fit, verdict
+from .domain.pk import PK, Window, daily_exposure
+from .model import build_design, fit, gls_estimate, verdict
 
 
 def ar1_noise(n: int, rho: float, sigma: float, rng: np.random.Generator) -> np.ndarray:
@@ -33,17 +34,26 @@ def fake_experiment(
     drift: float = 0.0,
     mood_weight: float = 0.0,
     seed: int | None = None,
+    pk: PK | None = None,
+    dose_hour: float = 8.0,
+    window: Window | None = None,
+    cycle: bool = False,
 ):
-    """答え（effect）の分かっている偽の記録を作る。"""
+    """答え（effect）の分かっている偽の記録を作る。
+
+    pk を与えると、本当の差が体内量に比例して現れる（飲み始めは徐々に、やめた後も残る）。
+    effect は飲み続けて安定したときの差。
+    """
     rng = np.random.default_rng(seed)
-    days = make_schedule(block_len=block_len, seed=seed)
+    days = make_schedule(block_len=block_len, seed=seed, cycle=cycle)
     n = len(days)
     day = np.array([d.day for d in days])
     treat = np.array([1 if d.phase == "B" else 0 for d in days])
+    exposure = treat.astype(float) if pk is None else daily_exposure(day, treat, pk, dose_hour, window or Window(23, 31, ""))
     mood = rng.normal(5, 1.5, n)
     trend = drift * (day - day.mean()) / n
-    y = base + effect * treat + trend + mood_weight * (mood - 5) + ar1_noise(n, rho, sigma, rng)
-    return day, treat, np.clip(y, 0, 10), {"mood": mood}
+    y = base + effect * exposure + trend + mood_weight * (mood - 5) + ar1_noise(n, rho, sigma, rng)
+    return day, treat, np.clip(y, 0, 10), {"mood": mood, "exposure": exposure}
 
 
 MIN_BASELINE_DAYS = 7
@@ -67,16 +77,22 @@ def noise_candidates(baseline: np.ndarray, seed: int = 0) -> tuple[np.ndarray, n
 def plan_length(
     baseline: np.ndarray,
     effect: float = 1.0,
-    block_lens: tuple[int, ...] = (7, 10, 14),
+    block_lens: tuple[int, ...] = (7, 14),
     n_sims: int = 100,
     seed: int = 0,
+    pk: PK | None = None,
+    dose_hour: float = 8.0,
+    window: Window | None = None,
 ) -> list[dict]:
     """実験の前に：この人の揺れ方なら、何日やれば effect 点の差を見つけられるか。
 
     baseline は最初の普段通りの記録（7日以上）。
     「見つけられる確率」= 本当に effect 点の差があるとき、判定が
     「はっきり差がある」になる割合。揺れ方の不確かさも含めて計算する。
+    pk を与えると、成分の持ち越しも含めて計算する。期間は曜日がそろうよう7日の倍数のみ。
     """
+    if any(bl % 7 for bl in block_lens):
+        raise ValueError("期間の長さは7日の倍数にする（曜日をそろえるため）")
     n_base = int(np.sum(~np.isnan(np.asarray(baseline, dtype=float))))
     if n_base < MIN_BASELINE_DAYS:
         raise ValueError(f"普段通りの記録が{MIN_BASELINE_DAYS}日以上必要です（現在{n_base}日）")
@@ -88,8 +104,10 @@ def plan_length(
         for s in range(n_sims):
             j = pick.integers(len(rhos))
             rho, sigma = float(rhos[j]), float(sigmas[j])
-            day, treat, y, _ = fake_experiment(effect, rho, sigma, block_len=bl, seed=seed + 1000 * i + s)
-            X, names = build_design(day, treat)
+            day, treat, y, ex = fake_experiment(
+                effect, rho, sigma, block_len=bl, seed=seed + 1000 * i + s, pk=pk, dose_hour=dose_hour, window=window
+            )
+            X, names = build_design(day, ex["exposure"])
             f = fit(y, X, day, names, n_draws=600, n_burn=300, seed=s)
             if verdict(f).p_better >= 0.95:
                 hits += 1
@@ -99,7 +117,9 @@ def plan_length(
 
 def null_check(
     y: np.ndarray,
-    treat: np.ndarray,
+    X: np.ndarray,
+    day: np.ndarray,
+    names: list[str],
     rho: float,
     sigma: float,
     direction: int = 1,
@@ -108,24 +128,31 @@ def null_check(
 ) -> dict:
     """実験の後に：差がゼロだったとしたら、この程度の差は何回に1回出るか。
 
-    この人の揺れ方（rho, sigma）で、差がゼロの偽データを何千回も作り、
-    飲んだ期間と飲まない期間の平均の差が、実際の差以上になった割合を数える。
+    比べる「差」は、時間の流れと外部要因を差し引き、引きずりを考慮した後の差
+    （引きずりの強さを推定値に固定した最小二乗推定）。
+    v0.1.0 は補正前の単純な平均の差で比べており、レポートの他の数字と基準がずれていた。
+
+    差がゼロの偽データは、この人の揺れ方（rho, sigma）の揺れだけで作る。
+    推定は直線的なので、基準値・時間の流れ・外部要因の大きさは結果に影響しない。
     """
     rng = np.random.default_rng(seed)
+    j = names.index("treatment")
+    observed = direction * gls_estimate(y, X, day, rho, j)
+    day = np.asarray(day, dtype=int)
     y = np.asarray(y, dtype=float)
-    treat = np.asarray(treat)
-    ok = ~np.isnan(y)
-    observed = direction * (y[ok & (treat == 1)].mean() - y[ok & (treat == 0)].mean())
-    n = len(y)
+    span = int(day.max() - day.min() + 1)
+    idx = day - day.min()
+    side = 1 if observed >= 0 else -1  # 出た差の向き（良い方向／悪い方向）で、同じ向きにこれ以上の差が出る割合
     count = 0
     for _ in range(n_sims):
-        u = ar1_noise(n, rho, sigma, rng)
-        diff = direction * (u[ok & (treat == 1)].mean() - u[ok & (treat == 0)].mean())
-        if diff >= observed:
+        u = ar1_noise(span, rho, sigma, rng)[idx]
+        u = np.where(np.isnan(y), np.nan, u)
+        if side * direction * gls_estimate(u, X, day, rho, j) >= side * observed:
             count += 1
     rate = count / n_sims
     return {
         "observed_diff": float(observed),
+        "side": side,
         "rate": rate,
         "one_in": (1 / rate) if rate > 0 else float("inf"),
     }

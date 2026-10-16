@@ -1,6 +1,6 @@
 """検証：答えの分かっている偽データで、判定の誤りの割合と幅の正しさを測る。
 
-  python scripts/calibrate.py   （4分前後）
+  python scripts/calibrate.py   （10分前後）
 
 結果は CALIBRATION.md に記録する。分析方法を変えたら必ず再実行する。
 """
@@ -10,14 +10,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import numpy as np
 from scipy import stats
 from n1engine.simulate import fake_experiment
-from n1engine.model import build_design, fit, verdict
+from n1engine.model import build_design, fit_chains, verdict
 
 def run(label, effect, rho, drift, n=200):
     ours_pos = naive_pos = cover = 0
     for s in range(n):
         day, treat, y, _ = fake_experiment(effect, rho=rho, sigma=1.0, drift=drift, seed=s)
         X, names = build_design(day, treat)
-        v = verdict(fit(y, X, day, names, n_draws=1000, n_burn=500, seed=s))
+        v = verdict(fit_chains(y, X, day, names, n_draws=250, n_burn=300, seed=s))  # 本番と同じ4本並行（回数は検証用に少なめ）
         ours_pos += v.p_better >= 0.95
         cover += v.effect_low <= effect <= v.effect_high
         t = stats.ttest_ind(y[treat == 1], y[treat == 0], equal_var=False, alternative='greater')
