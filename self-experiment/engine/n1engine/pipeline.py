@@ -5,6 +5,9 @@
   3. 補正には外部要因だけを使う。体の反応（気分・睡眠・心拍など）は補正に使わない
   4. 主要項目を判定し、偶然との比較・収束診断を付ける
   5. それ以外の体の反応は「参考」として同じ方法で推定する（判定の言葉は付けない）
+
+  v0.3.0：曝露量に「記録に現れるまでの遅れ」（domain/pd.py）をかけ、その長さも推定する。
+  揺れは t 分布にして、外れた日の重みを下げる。
 """
 
 from __future__ import annotations
@@ -13,7 +16,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .domain.pk import Window, daily_exposure, residual_share, suitability, washout_days, window_for
+from .domain import pd as pdm
+from .domain.pk import Window, daily_exposure, fill_phases, residual_share, suitability, washout_days, window_for
 from .domain.substances import Substance
 from .domain.variables import VARIABLES, confounders_in, derive, responses_in, transformed
 from .model import Fit, Verdict, build_design, fit_chains, verdict
@@ -35,6 +39,9 @@ class OutcomeResult:
     fit: Fit
     scale: float
     n_days: int
+    pd_table: list | None = None  # 記録に現れるまでの遅れ（半減期・日, 事後確率）
+    pd_mode: float | None = None
+    outlier_days: list | None = None  # 重みを大きく下げた日
 
 
 @dataclass
@@ -69,23 +76,54 @@ def _scale(y: np.ndarray, treat: np.ndarray, unit: str) -> tuple[np.ndarray, flo
     return 5 + (y - center) / sd, sd, center
 
 
-def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, dose_hour, bedtime, waketime, seed, n_draws):
+def full_exposure(d, substance, dose_hour, w) -> np.ndarray:
+    """1日目から最終日まで、記録の無い日も含めた毎日の体内量（定常状態=1.0）。"""
+    day = np.asarray(d["day"], dtype=int)
+    full, t = fill_phases(day, d["treat"])
+    def spread(key):
+        if key not in d:
+            return None
+        a = np.full(len(full), np.nan)
+        a[day - 1] = np.asarray(d[key], dtype=float)
+        return a
+    dh, tk = spread("dose_hour"), spread("taken")
+    if substance is not None and substance.pk is not None:
+        return daily_exposure(full, t, substance.pk, dose_hour, w, dh, tk)
+    x = t.astype(float)
+    if tk is not None:
+        x[(t == 1) & (tk == 0)] = 0.0
+    return x
+
+
+def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, dose_hour, bedtime, waketime, seed, n_draws, pd=True, robust=True):
     var = VARIABLES.get(key)
     unit = var.unit if var else RATING_UNIT
     timing = (var.timing if var and var.timing else None) or timing
     w = window_for(timing, bedtime, waketime)
-    if substance is not None and substance.pk is not None:
-        exposure = daily_exposure(d["day"], d["treat"], substance.pk, dose_hour, w, d.get("dose_hour"), d.get("taken"))
-    else:
-        exposure = d["treat"].astype(float)
+    x_full = full_exposure(d, substance, dose_hour, w)
+    rows = np.asarray(d["day"], dtype=int) - 1
+    opts = pdm.options(x_full)[:, rows] if pd else None
+    exposure = x_full[rows]
     y_raw = transformed(key, d[key])
     y, sc, _ = _scale(y_raw, d["treat"], unit)
     X, names = build_design(d["day"], exposure, X_conf)
-    f = fit_chains(y, X, d["day"], names, n_draws=n_draws, seed=seed)
+    kw = {"robust": robust}
+    if pd:
+        kw.update(treat_options=opts, option_logprior=pdm.log_prior())
+    f = fit_chains(y, X, d["day"], names, n_draws=n_draws, seed=seed, **kw)
     j = names.index("treatment")
     f.beta_draws[:, j] *= sc
     f.sigma_draws *= sc
     v = verdict(f, direction=direction if direction else 1, mid=mid if mid is not None else 0.0)
+    pd_table = pd_mode = None
+    if pd:
+        pd_table = pdm.posterior_table(f.lag_draws)
+        mode = int(np.bincount(f.lag_draws, minlength=len(pdm.PD_HALF_DAYS)).argmax())
+        pd_mode = pdm.PD_HALF_DAYS[mode]
+        X[:, j] = opts[mode]  # 偶然との比較は、最もありそうな遅れの列で行う
+    outliers = None
+    if robust and f.weight_mean is not None:
+        outliers = [int(dd) for dd, wv in zip(f.weight_day, f.weight_mean) if wv < 0.5]
     res = OutcomeResult(
         key=key,
         label=var.label if var else key,
@@ -98,6 +136,9 @@ def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, 
         fit=f,
         scale=sc,
         n_days=int(np.sum(~np.isnan(y_raw))),
+        pd_table=pd_table,
+        pd_mode=pd_mode,
+        outlier_days=outliers,
     )
     return res, (y, X, names)
 
@@ -118,6 +159,8 @@ def analyze(
     n_draws: int = 1000,
     null_sims: int = 2000,
     secondary: bool = True,
+    pd: bool = True,
+    robust: bool = True,
 ) -> Analysis:
     d = derive(d)
     if primary not in d:
@@ -130,7 +173,7 @@ def analyze(
     if mid is None and (pvar is None or pvar.unit == RATING_UNIT):
         mid = 1.0
     pdir = direction if direction is not None else (pvar.better if pvar else 1)
-    prim, (y, X, names) = _fit_outcome(d, primary, timing, pdir, mid, conf, None, substance, dose_hour, bedtime, waketime, seed, n_draws)
+    prim, (y, X, names) = _fit_outcome(d, primary, timing, pdir, mid, conf, None, substance, dose_hour, bedtime, waketime, seed, n_draws, pd, robust)
 
     sig = float(prim.fit.sigma_draws.mean()) / prim.scale
     null = null_check(y, X, d["day"], names, prim.v.rho_mean, sig, direction=pdir or 1, n_sims=null_sims, seed=seed)
@@ -141,7 +184,7 @@ def analyze(
         for k in responses_in(d, primary):
             if np.sum(~np.isnan(np.asarray(d[k], dtype=float))) < 10:
                 continue
-            r, _ = _fit_outcome(d, k, timing, VARIABLES[k].better, 0.0, conf, None, substance, dose_hour, bedtime, waketime, seed + 1, n_draws)
+            r, _ = _fit_outcome(d, k, timing, VARIABLES[k].better, 0.0, conf, None, substance, dose_hour, bedtime, waketime, seed + 1, n_draws, pd, robust)
             secs.append(r)
 
     suit = residual = washout = None

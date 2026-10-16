@@ -131,9 +131,28 @@ def render(*, item: str, outcome_label: str | None, res: Analysis, blinded: bool
                 L.append(f"  - [{lab}]({url})")
         else:
             L.append("- 数値は指定されたもので、出典を確認していません。")
-        L.append("")
-        L.append("前提：体に残っている量と、記録への影響が比例すると考えています。実際には、量が消えた後も影響が残ることがあります。")
     L.append("")
+
+    if p.pd_table:
+        L.append("## 記録に現れるまでの遅れ")
+        L.append("")
+        L.append("体に入った量は、すぐに記録に現れるとは限りません。働く場所に届き、体の反応が入れ替わるまでの遅れがあると、飲むのをやめた後も数日は記録に影響が残ります。この遅れの長さも、あなたの記録から推定しました。")
+        L.append("")
+        L.append("| 遅れ（半分になるまでの日数） | 見込み |")
+        L.append("|---|---|")
+        for h, pr in p.pd_table:
+            L.append(f"| {'遅れなし' if h == 0 else f'{h:g}日'} | {_pct(pr)} |")
+        L.append("")
+        lag_p = 1 - p.pd_table[0][1]
+        if lag_p >= 0.8:
+            L.append(f"遅れがある見込みが{_pct(lag_p)}です。次に試すときは、飲まない期間の最初の数日を長めに取ると比べやすくなります。")
+        elif lag_p <= 0.3:
+            L.append("遅れはほとんど無いと見られます。")
+        else:
+            L.append("遅れがあるかどうかは、この記録からははっきりしません。")
+        L.append("")
+        L.append("前提：影響の大きさが体の中の量に比例する範囲で考えています（薬力学の作用部位モデル・間接反応モデルの考え方）。")
+        L.append("")
 
     L.append("## そろえて比べたもの")
     L.append("")
@@ -148,6 +167,11 @@ def render(*, item: str, outcome_label: str | None, res: Analysis, blinded: bool
         miss = res.missing.get(c, 0)
         L.append(f"- {lab}" + (f"（空欄{miss}日は平均で埋めた）" if miss else ""))
     L.append("- 前日の体調の引きずり")
+    if p.outlier_days is not None:
+        if p.outlier_days:
+            L.append(f"- ふだんの揺れより大きく外れた日（{'・'.join(f'{d}日目' for d in p.outlier_days)}）は、結果を左右しすぎないよう重みを下げました")
+        else:
+            L.append("- ふだんの揺れより大きく外れた日は見当たりませんでした（外れた日があれば重みを下げる計算にしています）")
     L.append("")
     L.append("気分・ストレス・睡眠・心拍などの体の記録は、飲んだことで動きうるため差し引いていません。差し引くと、それを通じて生じた差まで消してしまいます。")
     if res.cycle_overlap is not None and res.cycle_overlap >= 0.5:
@@ -201,6 +225,7 @@ def render(*, item: str, outcome_label: str | None, res: Analysis, blinded: bool
     L.append("")
     L.append(f"- 設計：飲む期間と飲まない期間を折り返す順番で4期間（推定に使えた連続した日のペア：{p.fit.n_used}組）")
     L.append("- 分析：前日の引きずりを含めたベイズ回帰。飲んだかどうかは、成分の体内動態から計算した「記録の時間帯に体に残っている量」で表す（1コンパートメントの経口モデル）")
+    L.append("- 記録に現れるまでの遅れ（一次の遅れ、候補7つ）と、外れた日に強い揺れ（t 分布）を同時に推定")
     L.append(f"- 事前の前提：差は0を中心に±{p.fit.priors['treatment_sd']:g}点程度（0〜10以外の項目は、飲まない期間のばらつきを1点としてそろえる）。実験前に固定")
     L.append("- 判定基準：良かった確率95%以上で「はっきり差がある」、80%以上で「差がありそう」。主要項目は実験前に1つ決める")
     L.append(f"- 分析エンジン v{VERSION}。答えの分かっている偽データで、判定の誤りの割合と幅の正しさを検証済み（CALIBRATION.md）")

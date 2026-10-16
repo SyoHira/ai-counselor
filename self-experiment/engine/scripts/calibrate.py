@@ -11,13 +11,15 @@ import numpy as np
 from scipy import stats
 from n1engine.simulate import fake_experiment
 from n1engine.model import build_design, fit_chains, verdict
+from n1engine.domain import pd as pdm
 
 def run(label, effect, rho, drift, n=200):
     ours_pos = naive_pos = cover = 0
     for s in range(n):
         day, treat, y, _ = fake_experiment(effect, rho=rho, sigma=1.0, drift=drift, seed=s)
         X, names = build_design(day, treat)
-        v = verdict(fit_chains(y, X, day, names, n_draws=250, n_burn=300, seed=s))  # 本番と同じ4本並行（回数は検証用に少なめ）
+        v = verdict(fit_chains(y, X, day, names, n_draws=250, n_burn=300, seed=s, robust=True,
+                                treat_options=pdm.options(treat.astype(float))[:, day - 1], option_logprior=pdm.log_prior()))  # 本番と同じ（4本並行・遅れの推定・t 分布）
         ours_pos += v.p_better >= 0.95
         cover += v.effect_low <= effect <= v.effect_high
         t = stats.ttest_ind(y[treat == 1], y[treat == 0], equal_var=False, alternative='greater')

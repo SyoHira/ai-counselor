@@ -90,6 +90,7 @@ def cmd_analyze(a: argparse.Namespace) -> None:
         cycle_length=a.cycle_length,
         mid=a.mid,
         seed=a.seed,
+        pd=not a.no_pd,
     )
     blind = belief = None
     if a.blinded and "belief" in d:
@@ -129,6 +130,51 @@ def cmd_substances(a: argparse.Namespace) -> None:
         print(f"{s.key:10s} {s.name}｜{th}｜{r['level']}：{r['text']}")
 
 
+def cmd_quantum(a: argparse.Namespace) -> None:
+    """研究層：複数人の記録の「はい／いいえ」の2問から、質問の順番のモデルを比べる。"""
+    from .research.qq import qq_test
+    from .research.quantum import compare_models, table_from_records
+
+    person, qa, qb, order = [], [], [], []
+    for i, path in enumerate(a.csv):
+        with open(path, newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if (r.get("qa") or "") == "" or (r.get("qb") or "") == "" or r.get("pair_order") not in ("AB", "BA"):
+                    continue
+                person.append(i); qa.append(float(r["qa"])); qb.append(float(r["qb"])); order.append(r["pair_order"])
+    if not qa:
+        raise SystemExit("qa・qb・pair_order の記録がありません")
+    person, qa, qb, order = map(np.array, (person, qa, qb, order))
+    r = compare_models(table_from_records(qa, qb, order))
+    print(f"答え {r['answers']}件・{len(a.csv)}人（研究層。顧客のレポートには使わない）")
+    for m, v in r["models"].items():
+        print(f"  {m:13s} 対数尤度 {v['ll']:9.2f}  パラメータ {v['k']}  BIC {v['bic']:8.2f}")
+    print(f"  BIC で最も良いモデル：{r['best_bic']}")
+    print(f"  QQ等式の検定 p={r['qq_lr_p']:.3f}（食い違いの差 {r['qq_q']:+.3f}）／2次元量子モデルの当てはまり p={r['quantum2d_lr_p']:.3f}")
+    if len(a.csv) >= 2:
+        t = qq_test(person, qa, qb, order)
+        print(f"  人単位の再標本化：q={t['q']:+.3f}（95%の幅 {t['low']:+.3f}〜{t['high']:+.3f}）")
+
+
+def cmd_pool(a: argparse.Namespace) -> None:
+    """研究層：同じ成分・同じ主要項目の複数人の1人実験を、階層モデルでまとめる。"""
+    from .research.population import pool
+
+    sub = _substance(a)
+    est, se = [], []
+    for path in a.csv:
+        res = analyze(load(path), primary=a.outcome, timing=a.timing, substance=sub, dose_hour=a.dose_hour,
+                      bedtime=a.bedtime, waketime=a.waketime, n_draws=500, null_sims=50, secondary=False)
+        dr = res.primary.fit.draws("treatment")
+        est.append(float(dr.mean())); se.append(float(dr.std()))
+    r = pool(np.array(est), np.array(se))
+    print(f"{len(est)}人（研究層。成分の働きの話になるため、顧客のレポートや宣伝には使わない）")
+    print(f"  全体の平均 {r['mu_mean']:+.2f}（95%の幅 {r['mu_low']:+.2f}〜{r['mu_high']:+.2f}）／人による違い τ={r['tau_mean']:.2f}")
+    print(f"  次の1人の差の見込み {r['new_person_low']:+.2f}〜{r['new_person_high']:+.2f}")
+    for path, e, m in zip(a.csv, est, r["individual_mean"]):
+        print(f"  {path}: 1人の推定 {e:+.2f} → まとめた推定 {m:+.2f}")
+
+
 def _common(p):
     p.add_argument("--substance", help=f"成分（{', '.join(SUBSTANCES)}）")
     p.add_argument("--half-life", type=float, help="一覧に無い成分の半減期（時間）")
@@ -152,6 +198,7 @@ def main(argv: list[str] | None = None) -> None:
     an.add_argument("--mid", type=float, help="意味のある差の大きさ（主要項目の単位。0〜10の項目は既定1点）")
     an.add_argument("--cycle-length", type=float, default=28.0, help="月経周期の長さ（日）")
     an.add_argument("--blinded", action="store_true", help="中身を隠す上級版")
+    an.add_argument("--no-pd", action="store_true", help="記録に現れるまでの遅れを推定しない（遅れが無いと分かっている場合。検出力が上がる）")
     an.add_argument("--out")
     an.add_argument("--seed", type=int, default=0)
     _common(an)
@@ -165,6 +212,16 @@ def main(argv: list[str] | None = None) -> None:
     pl.add_argument("--seed", type=int, default=0)
     _common(pl)
     pl.set_defaults(func=cmd_plan)
+
+    qu = sub.add_parser("quantum", help="研究層：質問の順番の量子モデルを比べる（複数人のCSV）")
+    qu.add_argument("csv", nargs="+")
+    qu.set_defaults(func=cmd_quantum)
+
+    po = sub.add_parser("pool", help="研究層：複数人の1人実験を階層モデルでまとめる")
+    po.add_argument("csv", nargs="+")
+    po.add_argument("--outcome", default="outcome")
+    _common(po)
+    po.set_defaults(func=cmd_pool)
 
     su = sub.add_parser("substances", help="成分の一覧と、7日ずつの入れ替えに向いているか")
     _common(su)

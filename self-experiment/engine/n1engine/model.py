@@ -14,6 +14,14 @@
   気分・ストレス・睡眠など飲んだことで動きうる記録は、補正に使わない（v0.2.0）。
   補正に入れると、それを通じて生じた差まで消してしまうため（CALIBRATION.md の検証）。
 
+  v0.3.0 で加えた2つ
+  - 記録に現れるまでの遅れ（薬力学の持ち越し）：体内量がそのまま記録に効くのではなく、
+    一次の遅れを通って現れると考え、その遅れの長さもデータから推定する（domain/pd.py）。
+    候補の遅れごとに曝露量の列を用意し、ギブスサンプリングの1段として選び直す。
+  - 外れた日に強い推定（Student-t の揺れ、Geweke 1993）：揺れを正規分布ではなく
+    裾の重い t 分布とし、「ふだんの揺れより大きく外れた日」の重みを自動で下げる。
+    t 分布を「日ごとに大きさの違う正規分布の混合」として表し、日ごとの重みも推定する。
+
   揺れは「前日の揺れを一部引きずる」と考える（自己相関）。
   毎日の体調は前日の状態を持ち越すので、普通の比較（t検定）をそのまま使うと
   偶然の差を「差がある」と判定しすぎる。ここでは引きずりの強さ（rho）も
@@ -63,6 +71,10 @@ class Fit:
     n_used: int  # 推定に使えた日のペア数
     priors: dict = field(default_factory=dict)
     diag: dict | None = None  # fit_chains のときの収束診断
+    lag_draws: np.ndarray | None = None  # 遅れの候補の番号（treat_options の行）
+    nu_draws: np.ndarray | None = None  # t 分布の自由度（小さいほど裾が重い）
+    weight_mean: np.ndarray | None = None  # 推定に使った日ごとの重みの平均（1=ふつう、小さいほど外れた日）
+    weight_day: np.ndarray | None = None  # weight_mean がどの日のものか
 
     def draws(self, name: str) -> np.ndarray:
         return self.beta_draws[:, self.names.index(name)]
@@ -97,19 +109,31 @@ def build_design(
     return np.column_stack(cols), names
 
 
-def prepare(y, X, day):
+def prepare(y, X, day, return_index: bool = False):
     """記録の無い日を除いて日付順に並べ、前日がそろっている日のペアを作る。"""
     y = np.asarray(y, dtype=float)
     X = np.asarray(X, dtype=float)
     day = np.asarray(day)
     ok = ~np.isnan(y) & ~np.isnan(X).any(axis=1)
-    y, X, day = y[ok], X[ok], day[ok]
-    order = np.argsort(day)
-    y, X, day = y[order], X[order], day[order]
+    idx = np.where(ok)[0]
+    idx = idx[np.argsort(day[idx], kind="stable")]
+    y, X, day = y[idx], X[idx], day[idx]
     pair = np.where(np.diff(day) == 1)[0]
     if len(pair) < X.shape[1] + 2:
         raise ValueError(f"連続した記録が足りません（{len(pair)}組）")
+    if return_index:
+        return y, X, day, pair + 1, pair, idx
     return y, X, day, pair + 1, pair
+
+
+NU_GRID = np.array([3.0, 5.0, 10.0, 30.0, 100.0])
+
+
+def _log_gamma_weights(w: np.ndarray, nu: float) -> float:
+    from scipy.special import gammaln
+
+    a = nu / 2
+    return float(np.sum(a * np.log(a) - gammaln(a) + (a - 1) * np.log(w) - a * w))
 
 
 def fit(
@@ -122,11 +146,31 @@ def fit(
     n_burn: int = 1000,
     seed: int | None = None,
     jitter: bool = False,
+    treat_options: np.ndarray | None = None,
+    option_logprior: np.ndarray | None = None,
+    robust: bool = False,
 ) -> Fit:
-    """自己相関つきベイズ回帰をギブスサンプリングで推定する（1本）。"""
+    """自己相関つきベイズ回帰をギブスサンプリングで推定する（1本）。
+
+    treat_options：「treatment」列の候補（遅れの長さごとの曝露量、行=候補、列=日）。
+        与えると、どの候補がデータに合うかも推定する（option_logprior はその事前の重み）。
+    robust：揺れを t 分布にし、外れた日の重みを下げる。
+    """
     pr = {**DEFAULT_PRIORS, **(priors or {})}
     rng = np.random.default_rng(seed)
-    y, X, day, cur, prev = prepare(y, X, day)
+    X = np.array(X, dtype=float)
+    jt = names.index("treatment") if "treatment" in names else None
+    opts = None
+    if treat_options is not None:
+        opts_all = np.asarray(treat_options, dtype=float)
+        lp = np.zeros(len(opts_all)) if option_logprior is None else np.asarray(option_logprior, dtype=float)
+        g = int(np.argmax(lp))
+        X[:, jt] = opts_all[g]
+    y, X, day, cur, prev, idx = prepare(y, X, day, return_index=True)
+    if treat_options is not None:
+        opts = opts_all[:, idx]
+    w = np.ones(len(cur))
+    nu = float(NU_GRID[-1])
 
     k = X.shape[1]
     b0 = np.zeros(k)
@@ -149,38 +193,74 @@ def fit(
     beta_out = np.empty((n_draws, k))
     rho_out = np.empty(n_draws)
     sig_out = np.empty(n_draws)
+    lag_out = np.empty(n_draws, dtype=int) if opts is not None else None
+    nu_out = np.empty(n_draws) if robust else None
+    w_sum = np.zeros(len(cur))
+    g = int(np.argmax(lp)) if opts is not None else 0
 
     for it in range(total):
-        # 1) 引きずりを取り除いた形に変換して、係数を推定し直す
+        # 1) 引きずりを取り除いた形に変換して、係数を推定し直す（外れた日は重みを下げる）
         ys = y[cur] - rho * y[prev]
         Xs = X[cur] - rho * X[prev]
-        V = np.linalg.inv(B0_inv + Xs.T @ Xs / sigma2)
-        m = V @ (B0_inv @ b0 + Xs.T @ ys / sigma2)
+        Xw = Xs * w[:, None]
+        V = np.linalg.inv(B0_inv + Xw.T @ Xs / sigma2)
+        V = (V + V.T) / 2
+        m = V @ (B0_inv @ b0 + Xw.T @ ys / sigma2)
         beta = rng.multivariate_normal(m, V)
 
         # 2) 揺れの大きさを推定し直す
         resid = ys - Xs @ beta
         shape = pr["sigma2_shape"] + len(cur) / 2
-        scale = pr["sigma2_scale"] + resid @ resid / 2
+        scale = pr["sigma2_scale"] + (w * resid) @ resid / 2
         sigma2 = scale / rng.gamma(shape)
 
         # 3) 引きずりの強さを推定し直す（-1〜1の範囲に制限）
         u = y - X @ beta
-        prec = 1 / pr["rho_sd"] ** 2 + u[prev] @ u[prev] / sigma2
-        mean = (pr["rho_mean"] / pr["rho_sd"] ** 2 + u[prev] @ u[cur] / sigma2) / prec
+        prec = 1 / pr["rho_sd"] ** 2 + (w * u[prev]) @ u[prev] / sigma2
+        mean = (pr["rho_mean"] / pr["rho_sd"] ** 2 + (w * u[prev]) @ u[cur] / sigma2) / prec
         for _ in range(100):
             cand = rng.normal(mean, 1 / np.sqrt(prec))
             if -1 < cand < 1:
                 rho = cand
                 break
 
+        # 4) 記録に現れるまでの遅れを選び直す（候補ごとの当てはまり × 事前の重み）
+        if opts is not None:
+            ys = y[cur] - rho * y[prev]
+            base = (X[cur] - rho * X[prev]) @ beta - beta[jt] * (X[cur, jt] - rho * X[prev, jt])
+            e = ys[None, :] - base[None, :] - beta[jt] * (opts[:, cur] - rho * opts[:, prev])
+            ll = -0.5 * (e**2 @ w) / sigma2 + lp
+            pg = np.exp(ll - ll.max())
+            g = int(rng.choice(len(pg), p=pg / pg.sum()))
+            X[:, jt] = opts[g]
+
+        # 5) 外れた日の重みと、裾の重さ（自由度）を推定し直す
+        if robust:
+            e = (y[cur] - rho * y[prev]) - (X[cur] - rho * X[prev]) @ beta
+            w = rng.gamma((nu + 1) / 2, 2 / (nu + e**2 / sigma2))
+            w = np.maximum(w, 1e-6)
+            lnu = np.array([_log_gamma_weights(w, v) for v in NU_GRID])
+            pn = np.exp(lnu - lnu.max())
+            nu = float(rng.choice(NU_GRID, p=pn / pn.sum()))
+
         if it >= n_burn:
             j = it - n_burn
             beta_out[j] = beta
             rho_out[j] = rho
             sig_out[j] = np.sqrt(sigma2)
+            if lag_out is not None:
+                lag_out[j] = g
+            if nu_out is not None:
+                nu_out[j] = nu
+            w_sum += w
 
-    return Fit(names, beta_out, rho_out, sig_out, len(cur), pr)
+    f = Fit(names, beta_out, rho_out, sig_out, len(cur), pr)
+    f.lag_draws = lag_out
+    f.nu_draws = nu_out
+    if robust:
+        f.weight_mean = w_sum / n_draws
+        f.weight_day = day[cur]
+    return f
 
 
 N_CHAINS = 4
@@ -196,11 +276,12 @@ def fit_chains(
     n_draws: int = 1000,
     n_burn: int = 1000,
     seed: int = 0,
+    **kw,
 ) -> Fit:
     """出発点を変えた複数本を走らせてまとめる。diag に収束診断（R̂・ESS）が入る。"""
     from .diagnostics import check
 
-    fits = [fit(y, X, day, names, priors, n_draws, n_burn, seed=seed * 100 + c, jitter=True) for c in range(n_chains)]
+    fits = [fit(y, X, day, names, priors, n_draws, n_burn, seed=seed * 100 + c, jitter=True, **kw) for c in range(n_chains)]
     f = Fit(
         names,
         np.vstack([g.beta_draws for g in fits]),
@@ -209,6 +290,12 @@ def fit_chains(
         fits[0].n_used,
         fits[0].priors,
     )
+    if fits[0].lag_draws is not None:
+        f.lag_draws = np.concatenate([g.lag_draws for g in fits])
+    if fits[0].nu_draws is not None:
+        f.nu_draws = np.concatenate([g.nu_draws for g in fits])
+        f.weight_mean = np.mean([g.weight_mean for g in fits], axis=0)
+        f.weight_day = fits[0].weight_day
     j = names.index("treatment")
     f.diag = {
         "treatment": check(np.array([g.beta_draws[:, j] for g in fits])),
@@ -252,8 +339,10 @@ WORSE_LABELS = (
 
 # レポートに出す幅。名目の値ではなく、偽データで実際に何%正解を含むかを測って決める。
 # 0.1.0 の検証（CALIBRATION.md）：名目90%の幅は実際85%しか正解を含まなかったため、
-# 名目95%の幅を「90%の幅」として出す。
-INTERVAL_QUANTILES = (0.025, 0.975)
+# 名目95%の幅を「90%の幅」として出していた。
+# 0.3.0：遅れの推定と t 分布を入れると幅が広がり、名目95%の幅が実際95〜98%を含むようになったため、
+# 名目90%の幅に戻す（再検証の結果は CALIBRATION.md）。
+INTERVAL_QUANTILES = (0.05, 0.95)
 
 
 def verdict(f: Fit, direction: int = 1, mid: float = 1.0) -> Verdict:

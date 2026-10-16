@@ -18,6 +18,12 @@
   units     分・拍/分・対数の項目（カフェイン15時の設定）で、推定が偏らず幅が正しいか
   mediator2 v0.2.0 の既定の流れで、気分を通じた差が消えないか
 
+  v0.3.0 で追加
+  pdlag     記録に現れるまでの遅れ（薬力学の持ち越し）がある／ないとき、遅れを推定する場合としない場合
+  robust    大きく外れた日（体調不良など）が混ざるとき、t 分布の揺れと正規分布の揺れ
+  pooling   複数人の1人実験をまとめる階層モデル（research/population.py）
+  quantum   質問の順番の量子モデル（research/quantum.py）が、生成したモデルを見分けられるか
+
 結果は JSON で書き出す。CALIBRATION.md に転記するときはこの出力を使う。
 推定の回数は検証用（1000回）。本番（3000回）より少ない。
 """
@@ -43,6 +49,8 @@ from n1engine.model import build_design, fit, verdict  # noqa: E402
 from n1engine.pipeline import analyze  # noqa: E402
 from n1engine.run import load  # noqa: E402
 from n1engine.simulate import ar1_noise, fake_experiment, null_check  # noqa: E402
+from n1engine.domain import pd as pdm  # noqa: E402
+from n1engine.model import fit_chains  # noqa: E402
 
 N_DRAWS, N_BURN = 1000, 500
 
@@ -403,6 +411,126 @@ def exp_mediator2(n):
     return {"n": n, "true_total": 1.0, "mean_est": float(np.mean(est)), "ge95": float(np.mean(np.array(ps) >= 0.95))}
 
 
+def v03_fit(y, x_full, day, seed, pd=True, robust=True, conf=None):
+    """v0.3.0 の既定（遅れを推定・t 分布）と、それを切った場合を同じデータで比べるための当てはめ。"""
+    rows = np.asarray(day, dtype=int) - 1
+    X, names = build_design(day, x_full[rows], conf)
+    kw = {"robust": robust}
+    if pd:
+        kw.update(treat_options=pdm.options(x_full)[:, rows], option_logprior=pdm.log_prior())
+    f = fit_chains(y, X, day, names, n_draws=250, n_burn=300, seed=seed, **kw)
+    return f, verdict(f)
+
+
+def gen_pd(seq, effect, pd_half, rho, sigma, seed, outliers=0, shift=-4.0):
+    rng = np.random.default_rng(seed)
+    treat = np.repeat([1 if p == "B" else 0 for p in seq], 7)
+    n = len(treat)
+    day = np.arange(1, n + 1)
+    z = pdm.lag_filter(treat.astype(float), pd_half)
+    y = 5 + effect * z + ar1_noise(n, rho, sigma, rng)
+    if outliers:
+        bad = rng.choice(n, outliers, replace=False)
+        y[bad] += shift
+    return day, treat, y
+
+
+def exp_pdlag(n):
+    out = {}
+    for pd_half in (0.0, 2.0):
+        for effect in (0.0, 1.0):
+            acc = {m: {"est": [], "p": [], "cover": [], "plag": []} for m in ("v02", "v03")}
+            for s in range(n):
+                seq = "ABBA" if s % 2 == 0 else "BAAB"
+                day, treat, y = gen_pd(seq, effect, pd_half, 0.5, 1.0, 110_000 + s)
+                x = treat.astype(float)
+                for m, (pdon, rob) in {"v02": (False, False), "v03": (True, True)}.items():
+                    f, v = v03_fit(y, x, day, s, pdon, rob)
+                    acc[m]["est"].append(v.effect_mean)
+                    acc[m]["p"].append(v.p_better)
+                    acc[m]["cover"].append(v.effect_low <= effect <= v.effect_high)
+                    if pdon:
+                        acc[m]["plag"].append(float(np.mean(f.lag_draws > 0)))
+            out[f"half{pd_half:g}_effect{effect:g}"] = {
+                m: {"mean_est": float(np.mean(a["est"])), "ge95": float(np.mean(np.array(a["p"]) >= 0.95)),
+                    "cover": float(np.mean(a["cover"])), **({"p_lag": float(np.mean(a["plag"]))} if a["plag"] else {})}
+                for m, a in acc.items()
+            }
+    out["n"] = n
+    return out
+
+
+def exp_robust(n):
+    out = {}
+    for outl in (0, 2):
+        for effect in (0.0, 1.0):
+            acc = {m: {"est": [], "p": [], "cover": []} for m in ("normal", "t")}
+            for s in range(n):
+                seq = "ABBA" if s % 2 == 0 else "BAAB"
+                day, treat, y = gen_pd(seq, effect, 0.0, 0.5, 1.0, 120_000 + s, outliers=outl, shift=-5.0)
+                x = treat.astype(float)
+                for m, rob in (("normal", False), ("t", True)):
+                    f, v = v03_fit(y, x, day, s, False, rob)
+                    acc[m]["est"].append(v.effect_mean)
+                    acc[m]["p"].append(v.p_better)
+                    acc[m]["cover"].append(v.effect_low <= effect <= v.effect_high)
+            out[f"outliers{outl}_effect{effect:g}"] = {
+                m: {"mean_est": float(np.mean(a["est"])), "sd_est": float(np.std(a["est"])), "ge95": float(np.mean(np.array(a["p"]) >= 0.95)),
+                    "le05": float(np.mean(np.array(a["p"]) <= 0.05)), "cover": float(np.mean(a["cover"]))}
+                for m, a in acc.items()
+            }
+    out["n"] = n
+    out["outlier_shift"] = -5.0
+    return out
+
+
+def exp_pooling(n):
+    from n1engine.research.population import pool
+
+    rng = np.random.default_rng(130_000)
+    out = {}
+    for tau in (0.3, 1.0):
+        err_raw, err_pool, cov_ind, cov_mu = [], [], [], []
+        for s in range(n):
+            k = 12
+            mu = 0.6
+            theta = rng.normal(mu, tau, k)
+            se = rng.uniform(0.5, 1.0, k)
+            est = rng.normal(theta, se)
+            r = pool(est, se, seed=s, n_draws=2000)
+            err_raw.append(np.mean((est - theta) ** 2))
+            err_pool.append(np.mean((r["individual_mean"] - theta) ** 2))
+            cov_ind.append(np.mean((r["individual_low"] <= theta) & (theta <= r["individual_high"])))
+            cov_mu.append(r["mu_low"] <= mu <= r["mu_high"])
+        out[f"tau{tau:g}"] = {"mse_unpooled": float(np.mean(err_raw)), "mse_pooled": float(np.mean(err_pool)),
+                              "cover_individual": float(np.mean(cov_ind)), "cover_mu": float(np.mean(cov_mu))}
+    out["n"] = n
+    out["people_per_set"] = 12
+    return out
+
+
+def exp_quantum(n):
+    from n1engine.research.quantum import compare_models, simulate_quantum, simulate_classical
+
+    out = {}
+    for gen in ("quantum", "classical"):
+        wins = {"classical": 0, "quantum2d": 0, "qq_saturated": 0, "saturated": 0}
+        qq_reject = 0
+        for s in range(n):
+            rng = np.random.default_rng(140_000 + s)
+            if gen == "quantum":
+                tab = simulate_quantum(theta=0.6, phi=0.9, n_per_order=300, rng=rng)
+            else:
+                tab = simulate_classical(p=np.array([0.35, 0.15, 0.2, 0.3]), n_per_order=300, rng=rng)
+            r = compare_models(tab)
+            wins[r["best_bic"]] += 1
+            qq_reject += r["qq_lr_p"] < 0.05
+        out[gen] = {"best_by_bic": {k: v / n for k, v in wins.items()}, "qq_rejected": qq_reject / n}
+    out["n"] = n
+    out["answers_per_order"] = 300
+    return out
+
+
 EXPERIMENTS = {
     "example": (exp_example, 1),
     "nullalt": (exp_nullalt, 200),
@@ -416,6 +544,10 @@ EXPERIMENTS = {
     "nullcal": (exp_nullcal, 200),
     "units": (exp_units, 60),
     "mediator2": (exp_mediator2, 60),
+    "pdlag": (exp_pdlag, 60),
+    "robust": (exp_robust, 60),
+    "pooling": (exp_pooling, 200),
+    "quantum": (exp_quantum, 200),
 }
 
 

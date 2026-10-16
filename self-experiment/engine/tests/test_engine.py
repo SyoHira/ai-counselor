@@ -274,3 +274,70 @@ def test_missed_dose_lowers_exposure():
     miss = daily_exposure(day, treat, pk, 8.0, window_for("day"), taken=taken)
     assert miss[5] < full[5] * 0.7
     assert np.allclose(miss[:5], full[:5])
+
+
+# ---------------------------------------------------------------- v0.3.0 薬力学の遅れ・外れ値・研究層
+
+
+def test_pd_lag_filter_reaches_steady_state_and_lingers():
+    from n1engine.domain.pd import lag_filter
+
+    x = np.r_[np.ones(30), np.zeros(10)]
+    z = lag_filter(x, 2.0)
+    assert z[0] < 0.4 and abs(z[29] - 1.0) < 0.001
+    assert 0.6 < z[30] < 0.8  # やめた翌日も残る
+    assert np.allclose(lag_filter(x, 0.0), x)
+
+
+def test_pd_lag_is_recovered_when_present():
+    from n1engine.domain import pd as pdm
+    from n1engine.model import fit_chains
+
+    hits = 0
+    for s in range(6):
+        rng = np.random.default_rng(300 + s)
+        treat = np.repeat([0, 1, 1, 0, 1, 0, 0, 1], 7).astype(float)
+        day = np.arange(1, len(treat) + 1)
+        y = 5 + 2.0 * pdm.lag_filter(treat, 3.0) + rng.normal(0, 0.6, len(day))
+        X, names = build_design(day, treat)
+        f = fit_chains(y, X, day, names, n_draws=200, n_burn=200, seed=s,
+                       treat_options=pdm.options(treat), option_logprior=pdm.log_prior())
+        hits += np.mean(f.lag_draws > 0) > 0.8
+    assert hits >= 5
+
+
+def test_robust_flags_outlier_day():
+    from n1engine.model import fit_chains
+
+    day, treat, y, _ = fake_experiment(0.0, rho=0.3, sigma=0.8, seed=11)
+    y = y.copy()
+    y[9] -= 6.0  # 10日目に体調を崩した
+    X, names = build_design(day, treat)
+    f = fit_chains(y, X, day, names, n_draws=300, n_burn=300, seed=1, robust=True)
+    w = dict(zip(f.weight_day.tolist(), f.weight_mean.tolist()))
+    assert w[10] < 0.5
+    assert np.median(f.weight_mean) > 0.8
+
+
+def test_quantum_model_satisfies_qq_and_shows_order_effect():
+    from n1engine.research.quantum import _quantum_probs
+
+    p = _quantum_probs(0.6, 0.9)
+    assert abs((p[0, 0, 1] + p[0, 1, 0]) - (p[1, 0, 1] + p[1, 1, 0])) < 1e-12  # QQ等式
+    assert abs(p[0, 0].sum() - p[1, 0].sum()) > 0.05  # 順番で「A=はい」の割合が変わる
+
+
+def test_quantum_comparison_recovers_generating_model():
+    from n1engine.research.quantum import compare_models, simulate_classical, simulate_quantum
+
+    rng = np.random.default_rng(0)
+    assert compare_models(simulate_quantum(0.6, 0.9, 400, rng))["best_bic"] == "quantum2d"
+    assert compare_models(simulate_classical(np.array([0.35, 0.15, 0.2, 0.3]), 400, rng))["best_bic"] == "classical"
+
+
+def test_pooling_shrinks_toward_population_mean():
+    from n1engine.research.population import pool
+
+    est = np.array([2.5, -0.5, 0.8, 0.6, 0.7])
+    r = pool(est, np.full(5, 0.8), n_draws=1500)
+    assert abs(r["individual_mean"][0] - r["mu_mean"]) < abs(est[0] - r["mu_mean"])

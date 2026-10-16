@@ -95,7 +95,7 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px soli
 .seg{display:inline-flex;border:1px solid var(--rule);border-radius:8px;overflow:hidden}
 .seg button{border:0;background:var(--bg);color:var(--ink);font:inherit;font-size:14px;padding:8px 14px;cursor:pointer}
 .seg button+button{border-left:1px solid var(--rule)}
-.seg button[aria-pressed="true"]{background:var(--dose);color:var(--accent-ink)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 .stepper{display:inline-flex;align-items:center;border:1px solid var(--rule);border-radius:8px;overflow:hidden;background:var(--bg)}
 .stepper button{border:0;background:none;color:var(--ink);font-size:18px;width:40px;height:38px;cursor:pointer}
 .stepper output{font-family:var(--mono);min-width:44px;text-align:center;font-size:16px}
@@ -385,6 +385,22 @@ function dayCard(date) {
     body.append(el("div", {class:"notice", text:`今日は飲まない日です。${c.item}は飲まずに、いつもどおり過ごしてください。`}));
   }
 
+  /* はい／いいえの2問（研究層：質問の順番の量子モデル）。文脈をそろえるため、この日の最初に、順番を入れ替えて聞く */
+  const pairOrder = shuffled(["AB","BA"], date + "p")[0];
+  v.pair_order = pairOrder;
+  const PAIR = {qa:"今日の体の調子は良かったですか", qb:"今日の気分は良かったですか"};
+  const pairBox = el("div", {class:"field"}, el("div", {class:"lab"}, "はい／いいえで、思ったとおりに", el("span", {class:"hint", text:"上から順に答える"})));
+  for (const k of (pairOrder === "AB" ? ["qa","qb"] : ["qb","qa"])) {
+    const seg = el("div", {class:"seg", role:"group", "aria-label":PAIR[k]});
+    const yes = el("button", {type:"button", "aria-pressed":String(v[k] === 1), text:"はい"});
+    const no = el("button", {type:"button", "aria-pressed":String(v[k] === 0), text:"いいえ"});
+    yes.onclick = () => { v[k] = 1; yes.setAttribute("aria-pressed","true"); no.setAttribute("aria-pressed","false"); };
+    no.onclick = () => { v[k] = 0; no.setAttribute("aria-pressed","true"); yes.setAttribute("aria-pressed","false"); };
+    seg.append(yes, no);
+    pairBox.append(el("div", {class:"unit", style:"justify-content:space-between;flex-wrap:wrap;gap:8px"}, el("span", {style:"font-size:14px;color:var(--ink)", text:PAIR[k]}), seg));
+  }
+  body.prepend(pairBox);
+
   const ratings = [{k:"mood", label:"今日の気分", ends:["とても悪い","とても良い"]}, {k:"stress", label:"今日のストレス", ends:["まったくない","とても強い"]}];
   if (prim.key === "outcome" && prim.timing === "day") ratings.push({k:"outcome", label:prim.label, ends:prim.better < 0 ? ["まったくない","とても強い"] : ["とても悪い","とても良い"]});
   const order = shuffled(ratings.map(r => r.k), date + "d");
@@ -600,7 +616,7 @@ function renderSetup() {
 }
 
 /* ---------- 書き出し（分析エンジンの CSV 形式） ---------- */
-const COLS = ["day","date","phase","outcome","sol","waso","tst","tib","se","sleep","rhr","rmssd","mood","stress","alcohol","coffee","offday","sick","cycle_day","taken","dose_hour","rating_order"];
+const COLS = ["day","date","phase","outcome","sol","waso","tst","tib","se","sleep","rhr","rmssd","mood","stress","alcohol","coffee","offday","sick","cycle_day","taken","dose_hour","rating_order","qa","qb","pair_order"];
 function cycleDay(date) {
   const starts = Object.entries(days).filter(([, r]) => r.day?.period_start).map(([d]) => d);
   if (config.lastPeriod) starts.push(config.lastPeriod);
@@ -616,7 +632,7 @@ function rowFor(date, dayNo, phase) {
     mood:dd.mood, stress:dd.stress, alcohol:r.day ? (dd.alcohol ?? 0) : null, coffee:r.day && config.substance !== "caffeine" ? (dd.coffee ?? 0) : null,
     offday:r.day ? b(dd.offday) : null, sick:r.day ? b(dd.sick) : null, cycle_day:config.cycle ? cycleDay(date) : null,
     taken:phase === "B" && r.day ? b(dd.taken) : null, dose_hour:phase === "B" && dd.taken && dd.dose ? Math.round(toHours(dd.dose)*100)/100 : null,
-    rating_order:[dd.order, nn.order].filter(Boolean).join("|")};
+    rating_order:[dd.order, nn.order].filter(Boolean).join("|"), qa:dd.qa, qb:dd.qb, pair_order:r.day && dd.qa != null && dd.qb != null ? dd.pair_order : null};
 }
 function toCsv(rows) {
   const esc = x => x == null ? "" : /[",\n]/.test(String(x)) ? `"${String(x).replace(/"/g, '""')}"` : String(x);

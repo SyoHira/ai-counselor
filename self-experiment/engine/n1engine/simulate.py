@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from .design import make_schedule
+from .domain import pd as pdm
 from .domain.pk import PK, Window, daily_exposure
 from .model import build_design, fit, gls_estimate, verdict
 
@@ -108,7 +109,9 @@ def plan_length(
                 effect, rho, sigma, block_len=bl, seed=seed + 1000 * i + s, pk=pk, dose_hour=dose_hour, window=window
             )
             X, names = build_design(day, ex["exposure"])
-            f = fit(y, X, day, names, n_draws=600, n_burn=300, seed=s)
+            # 判定と同じ設定（遅れの推定・t 分布）で見積もる。v0.2.0 までは遅れなしの式で、検出率を高めに出していた
+            f = fit(y, X, day, names, n_draws=600, n_burn=300, seed=s, robust=True,
+                    treat_options=pdm.options(ex["exposure"]), option_logprior=pdm.log_prior())
             if verdict(f).p_better >= 0.95:
                 hits += 1
         out.append({"days": bl * 4, "power": hits / n_sims})

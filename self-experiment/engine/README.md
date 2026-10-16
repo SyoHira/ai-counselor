@@ -12,7 +12,7 @@ python -m n1engine.run analyze examples/example.csv \
   --item "カフェイン（15時）" --outcome sol --substance caffeine --dose-hour 15 --out report.md
 python -m n1engine.run substances        # 成分の一覧と、7日ずつの入れ替えに向いているか
 python -m n1engine.run plan 普段の記録.csv --substance caffeine --dose-hour 15 --outcome sol
-python -m pytest -q tests                # 壊れていないかの確認（40秒前後）
+python -m pytest -q tests                # 壊れていないかの確認（50秒前後）
 python scripts/calibrate.py              # 本格的な検証（10分前後）
 ```
 
@@ -97,7 +97,22 @@ ke = ln2 ÷ 半減期    ka = 最高濃度までの時間 Tmax から逆算
 2. **7日ずつの入れ替えに向いているか。** 飲む期間と飲まない期間の体内量の差が、0/1で切り替わる場合の何%か。カフェイン99%（向いている）、半減期2日の成分67%（必要日数が約2.2倍）、ビタミンD 7%（向かない）。オメガ3は安定まで4〜6か月かかるので向かない。しきい値（85%・50%）はこのエンジンの決めごと
 3. **実験前に空ける日数**（半減期の5倍）
 
-前提：体内量と記録への影響が比例する。量が消えた後も影響が残る成分（薬力学の持ち越し）では成り立たない。半減期を半分や倍に誤ったときの影響は検証で測った（CALIBRATION.md）。
+前提：影響が体内量に比例する範囲で考える。半減期を半分や倍に誤ったときの影響は検証で測った（CALIBRATION.md）。
+
+### 2.6 記録に現れるまでの遅れ（`domain/pd.py`、v0.3.0）
+
+体の中の量が減っても、記録への影響はしばらく残ることがある（薬力学の持ち越し）。作用部位モデル（Sheiner 1979）と間接反応モデル（Dayneka 1993）は、影響が量に比例する範囲ではどちらも「体内量の一次の遅れ」になる。
+
+```
+記録に届く量(今日) = λ × 記録に届く量(昨日) + (1 − λ) × 体内量(今日)
+λ = 0.5^(1 ÷ 遅れの半減期[日])      候補：0・0.5・1・2・3・5・7日
+```
+
+遅れの長さは、候補ごとの当てはまりを比べてギブスサンプリングの中で選び直す（事前の重みは「遅れなし」0.75）。レポートには遅れの見込みを表で出す。28日の記録では遅れの有無を見分ける力が弱いので、はっきりしないときはそう書く。遅れが無いと分かっている場合は `--no-pd` で切ると検出力が上がる。
+
+### 2.7 外れた日に強い揺れ（v0.3.0）
+
+揺れを裾の重い t 分布にする（Geweke 1993：正規分布の混合として表し、日ごとの重みも推定する）。体調を崩した日のように大きく外れた日の重みが自動で下がり、その日をレポートに出す。外れた日がない記録ではほぼ損をしない（CALIBRATION.md）。
 
 ### 3. シミュレーション（`simulate.py`）
 
@@ -138,7 +153,24 @@ ke = ln2 ÷ 半減期    ka = 最高濃度までの時間 Tmax から逆算
 
 **ここにあるものは顧客のレポートに使わない。**
 
-### 量子認知の検証（`research/qq.py`）
+### 質問の順番の量子モデル（`research/quantum.py`、`research/qq.py`）
+
+心の状態をベクトル、質問への答えを軸への射影（Lüders の規則）で表す量子確率モデル（Wang & Busemeyer 2013）を、毎日の「はい／いいえ」2問（順番をランダムに入れ替える）に当てはめる。
+
+| モデル | 中身 | パラメータ |
+|---|---|---|
+| 古典 | 順番に関係なく同じ同時確率 | 3 |
+| 量子2次元 | 状態の角度 θ と、2つの質問の軸のなす角 φ。p(A=a の後 B=b) = \|⟨a\|ψ⟩\|² \|⟨b\|a⟩\|² | 2 |
+| QQ | 「答えが食い違う割合は順番によらない」だけを課す | 5 |
+| 自由 | 順番ごとに何も仮定しない | 6 |
+
+`python -m n1engine.run quantum 記録1.csv 記録2.csv …` で、4つを BIC で比べ、QQ等式を尤度比で検定する。偽データでは、各順番300件なら作ったモデルを100%当てたが、1人分（各順番14件）では古典のデータの3割を量子と取り違えた。各順番50件を超えてから判断する。
+
+### 複数人をまとめる階層モデル（`research/population.py`）
+
+同じ成分・同じ主要項目の1人実験を、階層ベイズ（Zucker 他 1997）でまとめる。`python -m n1engine.run pool 記録1.csv 記録2.csv … --outcome sol --substance caffeine`。全体の平均・人による違い・次の1人の見込みを出す。成分の働きの話になるので、顧客のレポートや宣伝には使わない（社内で日数の見積もりに使う）。
+
+### QQ等式の検証（`research/qq.py`）
 
 質問の順番で回答が変わる現象について、量子確率モデルは「2つの質問の答えが食い違う確率は、どちらを先に聞いても同じ」という等式（QQ等式）を、事前に数値まで予測した。全米規模の調査70件と実験2件で支持されている（Wang 他 2014）。
 一方、同じモデルの別の予測は多くのデータで成り立たず（Boyer-Kassem 他 2016）、同じ質問を繰り返すと同じ答えが返る現象との両立も未解決。体調の自己評価で検証した例は見つかっていない。
@@ -186,6 +218,12 @@ ke = ln2 ÷ 半減期    ka = 最高濃度までの時間 Tmax から逆算
 | 単純な量子モデルは多くの場合使えない | [Boyer-Kassem 他 2016](https://thomasboyerkassem.yolasite.com/resources/Boyer-Kassem-et-al-(2016)-Quantum-models-question-order-effect.pdf) |
 | 順番の効果と回答の再現性の両立は未解決 | [Khrennikov 他](https://arxiv.org/pdf/1508.03686) |
 | 計算方法 | Chib 1993, Bayes regression with autoregressive errors: A Gibbs sampling approach |
+| 作用部位モデル（記録に現れるまでの遅れ） | Sheiner 他 1979（[解説](https://tutorials.pumas.ai/html/PDModels/02-effect-compartment.html)） |
+| 間接反応モデル | Dayneka, Garg, Jusko 1993, J Pharmacokinet Biopharm 21:457（[解説](https://tutorials.pumas.ai/release-2.7/html/PDModels/03-indirect-response.html)） |
+| N-of-1 の持ち越しを分布ラグで推定 | Liao 他, [arXiv 2112.13991](https://arxiv.org/pdf/2112.13991) |
+| t 分布の揺れ（正規分布の混合・ギブス） | Geweke 1993, [J Appl Econometrics](https://ideas.repec.org/a/jae/japmet/v8y1993isps19-40.html) |
+| 1人実験を束ねる階層ベイズ | Zucker 他 1997；Schmid & Yang 2022, [HDSR](https://hdsr.mitpress.mit.edu/pub/b6efwlql) |
+| 量子の質問順序モデル | Wang & Busemeyer 2013, Topics in Cognitive Science；[POVM への拡張と限界](https://arxiv.org/pdf/1811.00045) |
 | 収束診断の基準（R̂ 1.01未満、有効回数400以上） | Vehtari 他 2021（[解説](https://discourse.mc-stan.org/t/new-r-hat-and-ess/8165)） |
 | 半減期の5倍で入れ替え前に空ける／薬力学の持ち越しは薬物動態より長いことがある | [CASRAI](https://casrai.org/guides/crossover-trial-design-and-carryover)、[MoTR](https://arxiv.org/pdf/2208.00739) |
 | 成分ごとの数値 | `n1engine/domain/substances.py` に出典ごと記載 |
