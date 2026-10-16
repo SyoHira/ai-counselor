@@ -19,7 +19,8 @@ def run(label, effect, rho, drift, n=200):
         day, treat, y, _ = fake_experiment(effect, rho=rho, sigma=1.0, drift=drift, seed=s)
         X, names = build_design(day, treat)
         v = verdict(fit_chains(y, X, day, names, n_draws=250, n_burn=300, seed=s, robust=True,
-                                treat_options=pdm.options(treat.astype(float))[:, day - 1], option_logprior=pdm.log_prior()))  # 本番と同じ（4本並行・遅れの推定・t 分布）
+                                treat_options=pdm.options(treat.astype(float))[:, day - 1],
+                                option_logprior=np.where(pdm.identifiable(pdm.options(treat.astype(float))[:, day - 1], day), pdm.log_prior(), -np.inf)))  # 本番と同じ（4本並行・遅れの推定・t 分布）
         ours_pos += v.p_better >= 0.95
         cover += v.effect_low <= effect <= v.effect_high
         t = stats.ttest_ind(y[treat == 1], y[treat == 0], equal_var=False, alternative='greater')

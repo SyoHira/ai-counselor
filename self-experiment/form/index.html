@@ -92,7 +92,7 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px soli
 .toggles{display:flex;gap:8px;flex-wrap:wrap}
 .tog{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--rule);border-radius:99px;padding:6px 14px;font-size:14px;cursor:pointer;background:var(--bg);user-select:none}
 .tog input{accent-color:var(--accent);width:16px;height:16px;margin:0}
-.seg{display:inline-flex;border:1px solid var(--rule);border-radius:8px;overflow:hidden}
+.seg{justify-self:start;display:inline-flex;border:1px solid var(--rule);border-radius:8px;overflow:hidden}
 .seg button{border:0;background:var(--bg);color:var(--ink);font:inherit;font-size:14px;padding:8px 14px;cursor:pointer}
 .seg button+button{border-left:1px solid var(--rule)}
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
@@ -193,7 +193,8 @@ const OUTCOMES = {
   outcome:{label:"自分で決めた項目", unit:"0〜10", timing:null, better:1, custom:true},
 };
 const BASELINE_DAYS = 7, BLOCK = 7;
-const SEQS = {short:["ABBA","BAAB"], cycle:["ABABBABA","BABAABAB"]};
+const SEQS = {short:["ABBA","BAAB"], cycle:["ABABBABA","BABAABAB"], dose:["AHBBHA","BHAAHB"]};
+const PHASE_WORD = {A:"飲まない", B:"飲む", H:"半分の量"};
 
 /* ---------- 日付 ---------- */
 const pad = n => String(n).padStart(2,"0");
@@ -300,7 +301,8 @@ function renderTop() {
   if (info.kind === "none") st.append(el("span", {class:"chip off", text:"設定がまだです"}));
   else if (info.kind === "before") st.append(el("span", {class:"chip off", text:`普段の記録まであと${info.until}日`}));
   else if (info.kind === "base") st.append(el("span", {class:"chip base"}, el("span",{class:"dot"}), "普段どおりの記録"), el("span", {class:"daycount", text:`${info.n} / ${BASELINE_DAYS}日目`}));
-  else if (info.kind === "exp") st.append(info.phase === "B" ? el("span", {class:"chip dose"}, el("span",{class:"dot"}), "今日は飲む日") : el("span", {class:"chip rest"}, el("span",{class:"dot"}), "今日は飲まない日"), el("span", {class:"daycount", text:`実験 ${info.n} / ${s.expDays}日目`}));
+  else if (info.kind === "exp" && config.blinded) st.append(el("span", {class:"chip base"}, el("span",{class:"dot"}), "渡されたカプセルを飲む日"), el("span", {class:"daycount", text:`実験 ${info.n} / ${s.expDays}日目`}));
+  else if (info.kind === "exp") st.append(info.phase === "A" ? el("span", {class:"chip rest"}, el("span",{class:"dot"}), "今日は飲まない日") : el("span", {class:"chip dose"}, el("span",{class:"dot"}), info.phase === "H" ? "今日は半分の量を飲む日" : "今日は飲む日"), el("span", {class:"daycount", text:`実験 ${info.n} / ${s.expDays}日目`}));
   else st.append(el("span", {class:"chip off", text:"実験は終わりました。書き出しへ"}));
 }
 
@@ -369,7 +371,8 @@ function dayCard(date) {
   if (v.offday == null) { const wd = parse(date).getDay(); v.offday = wd === 0 || wd === 6; }
   const body = el("div", {class:"card-body"});
 
-  if (info.kind === "exp" && info.phase === "B" && c.substance !== "none") {
+  const dosing = info.kind === "exp" && (c.blinded || info.phase !== "A");
+  if (dosing) {
     if (v.taken == null) v.taken = true;
     if (!v.dose) v.dose = c.doseTime;
     const timeBox = timeField("dose-"+date, "実際に飲んだ時刻", v.dose, x => v.dose = x);
@@ -380,7 +383,18 @@ function dayCard(date) {
     const pick = t => { v.taken = t; b1.setAttribute("aria-pressed", String(t)); b2.setAttribute("aria-pressed", String(!t)); timeBox.hidden = !t; };
     b1.onclick = () => pick(true); b2.onclick = () => pick(false);
     seg.append(b1, b2);
-    body.append(el("div", {class:"field"}, el("div",{class:"lab"}, `${c.item}`), seg), timeBox);
+    const what = c.blinded ? "渡されたカプセル" : info.phase === "H" ? `${c.item}（半分の量）` : c.item;
+    body.append(el("div", {class:"field"}, el("div",{class:"lab"}, what), seg), timeBox);
+    if (c.blinded) {
+      const bs = el("div", {class:"seg", role:"group", "aria-label":"本物だったと思うか"});
+      const opts = [[1,"本物"],[0,"空"],[null,"わからない"]].map(([val, lab]) => {
+        const bt = el("button", {type:"button", "aria-pressed":String(v.belief === val && v.belief_set === true), text:lab});
+        bt.onclick = () => { v.belief = val; v.belief_set = true; opts.forEach(o => o.setAttribute("aria-pressed", String(o === bt))); };
+        return bt;
+      });
+      bs.append(...opts);
+      body.append(el("div", {class:"field"}, el("div", {class:"lab"}, "今日のカプセルは本物だったと思いますか", el("span", {class:"hint", text:"当たっていなくて大丈夫"})), bs));
+    }
   } else if (info.kind === "exp" && info.phase === "A") {
     body.append(el("div", {class:"notice", text:`今日は飲まない日です。${c.item}は飲まずに、いつもどおり過ごしてください。`}));
   }
@@ -501,8 +515,11 @@ function renderDays() {
   if (!config) return renderNoConfig();
   const s = schedule(config);
   const out = [];
-  out.push(el("div", {class:"blockbar", "aria-label":"実験の並び"}, el("span", {class:"base", text:"普段 7日"}), ...config.sequence.split("").map(p => el("span", {class:p, text:p === "B" ? "飲む 7日" : "飲まない 7日"}))));
-  out.push(el("div", {class:"legend"}, el("span", {text:"上の線：橙=飲む日・青灰=飲まない日・点線=普段の記録"}), el("span", {text:"丸：左=日中・右=夜の睡眠"})));
+  if (config.blinded) out.push(el("div", {class:"notice", text:"中身を隠す実験なので、どの日が本物かは表示しません。協力者だけが知っています。"}));
+  else {
+    out.push(el("div", {class:"blockbar", "aria-label":"実験の並び"}, el("span", {class:"base", text:"普段 7日"}), ...config.sequence.split("").map(p => el("span", {class:p === "H" ? "B" : p, text:`${PHASE_WORD[p]} 7日`}))));
+    out.push(el("div", {class:"legend"}, el("span", {text:"上の線：橙=飲む日・青灰=飲まない日・点線=普段の記録"}), el("span", {text:"丸：左=日中・右=夜の睡眠"})));
+  }
   const cal = el("div", {class:"cal"});
   WD.forEach(w => cal.append(el("div", {class:"wk", text:w})));
   const first = parse(s.start).getDay();
@@ -510,8 +527,8 @@ function renderDays() {
   const total = BASELINE_DAYS + s.expDays;
   for (let i = 0; i < total; i++) {
     const d = addDays(s.start, i), inf = dayInfo(d), rec = days[d] || {};
-    const cls = ["cell", inf.kind === "base" ? "base" : inf.phase === "B" ? "dose" : "rest", d === today() ? "today" : ""].join(" ");
-    const b = el("button", {type:"button", class:cls, "aria-current":String(d === selected), "aria-label":`${md(d)} ${inf.kind === "base" ? "普段" : inf.phase === "B" ? "飲む日" : "飲まない日"}`, onclick:() => { selected = d; render(); }},
+    const cls = ["cell", inf.kind === "base" ? "base" : config.blinded ? "" : inf.phase === "A" ? "rest" : "dose", d === today() ? "today" : ""].join(" ");
+    const b = el("button", {type:"button", class:cls, "aria-current":String(d === selected), "aria-label":`${md(d)} ${inf.kind === "base" ? "普段" : config.blinded ? "実験" : PHASE_WORD[inf.phase] + "日"}`, onclick:() => { selected = d; render(); }},
       el("span", {class:"d", text:String(parse(d).getDate())}),
       el("span", {class:"marks"}, el("span", {class:"m" + (rec.day ? " on" : "")}), el("span", {class:"m" + (rec.night ? " on" : "")})));
     cal.append(b);
@@ -529,7 +546,7 @@ function renderDays() {
 function renderSetup() {
   const c = {...(config || {
     item:"", substance:"magnesium", doseTime:"21:00", primary:"sol", customLabel:"", customTiming:"day", customLower:false,
-    wear:false, cycle:false, cycleLength:28, lastPeriod:"", bedtime:"23:00", waketime:"07:00", startDate:addDays(today(), 1),
+    wear:false, cycle:false, dose:false, blinded:false, cycleLength:28, lastPeriod:"", bedtime:"23:00", waketime:"07:00", startDate:addDays(today(), 1),
   })};
   const locked = config && dayInfo(today()).kind !== "before" && dayInfo(today()).kind !== "none";
   const out = [];
@@ -572,6 +589,11 @@ function renderSetup() {
   body.append(el("div", {class:"field"},
     el("div", {class:"toggles"}, (() => { const t = checkTog("cycle", "月経周期を記録する", c.cycle, x => { c.cycle = x; cycBox.hidden = !x; }); if (locked) t.querySelector("input").disabled = true; return t; })()),
     el("div", {class:"hint", text:"記録する場合は56日（7日×8期間）の並びになります。28日の並びは、周期の時期と飲む期間がほぼ重なり、区別できないためです。"})), cycBox);
+  body.append(el("div", {class:"field"},
+    el("div", {class:"toggles"},
+      (() => { const t = checkTog("dosel", "量の違いも見る（半分の量の期間を入れる・42日）", c.dose, x => c.dose = x); if (locked) t.querySelector("input").disabled = true; return t; })(),
+      (() => { const t = checkTog("blind", "中身を隠す（協力者が本物と空のカプセルを入れ替える）", c.blinded, x => c.blinded = x); if (locked) t.querySelector("input").disabled = true; return t; })()),
+    el("div", {class:"hint", text:"量の違いを見ると、量が増えると頭打ちになるかが分かります（月経周期を記録する場合は56日の並びを優先します）。中身を隠すと、期待による記録の動きを取り除けます。"})));
   body.append(el("div", {class:"row"}, timeField("bedtime", "ふだん寝る時刻", c.bedtime, x => c.bedtime = x), timeField("waketime", "ふだん起きる時刻", c.waketime, x => c.waketime = x)));
   body.append(el("div", {class:"field"}, el("label", {for:"start", text:"普段どおりの記録を始める日（ここから7日間は飲まない）"}), el("input", {type:"date", id:"start", value:c.startDate, disabled:locked, oninput:e => c.startDate = e.target.value})));
   body.append(el("div", {class:"notice"}, "次に当てはまる場合は、この実験をしないでください：服薬中・通院中、妊娠中・授乳中、医薬品成分を含むもの、指定成分（コレウス・フォルスコリー、ドオウレン、プエラリア・ミリフィカ、ブラックコホシュ）を含むもの。"));
@@ -584,7 +606,7 @@ function renderSetup() {
     if (c.substance === "custom" && !Number(c.customTh)) { msg.className = "saved err"; msg.textContent = "半減期を入れてください"; return; }
     if (OUTCOMES[c.primary]?.wear && !c.wear) { msg.className = "saved err"; msg.textContent = "この主要項目には機器の記録が必要です"; return; }
     if (c.primary === "outcome" && !c.customLabel.trim()) { msg.className = "saved err"; msg.textContent = "主要項目の名前を入れてください"; return; }
-    const kind = c.cycle ? "cycle" : "short";
+    const kind = c.cycle ? "cycle" : c.dose ? "dose" : "short";
     if (!locked && (!c.sequence || !SEQS[kind].includes(c.sequence))) {
       const r = new Uint32Array(1); crypto.getRandomValues(r);
       c.sequence = SEQS[kind][r[0] % 2];
@@ -602,7 +624,17 @@ function renderSetup() {
       el("div", {class:"card-body"}, el("dl", {class:"kv"},
         el("dt", {text:"普段の記録"}), el("dd", {text:`${md(s.start)} 〜 ${md(addDays(s.expStart, -1))}`}),
         el("dt", {text:"実験"}), el("dd", {text:`${md(s.expStart)} 〜 ${md(s.end)}（${s.expDays}日）`}),
-        el("dt", {text:"並び"}), el("dd", {class:"mono", text:config.sequence + "（7日ずつ。A=飲まない・B=飲む）"})))));
+        el("dt", {text:"並び"}), el("dd", {class:"mono", text:config.blinded ? "協力者だけが知っています" : config.sequence + "（7日ずつ。A=飲まない・B=飲む・H=半分の量）"})))));
+    if (config.blinded) {
+      const sheet = el("div", {class:"card-body"});
+      sheet.hidden = true;
+      const rows = [];
+      for (let k = 1; k <= s.expDays; k++) { const d = addDays(s.expStart, k - 1), ph = config.sequence[Math.floor((k - 1) / BLOCK)]; rows.push(el("tr", {}, el("td", {class:"num", text:md(d)}), el("td", {text:ph === "A" ? "空のカプセル" : ph === "H" ? "半分の量のカプセル" : "本物のカプセル"}))); }
+      sheet.append(el("div", {class:"tw"}, el("table", {}, el("thead", {}, el("tr", {}, el("th", {text:"日"}), el("th", {text:"渡すもの"}))), el("tbody", {}, ...rows))));
+      out.push(el("section", {class:"card"}, el("div", {class:"card-head"}, el("h2", {text:"協力者用の割り付け表"}), el("span", {class:"when", text:"本人は見ない"})),
+        el("div", {class:"card-body"}, el("p", {style:"margin:0;font-size:14px;color:var(--muted)", text:"協力者に画面を渡してから開いてください。協力者は毎日、表のとおりに本物か空のカプセルを用意します。見た目と味が同じカプセルを使います。"})),
+        sheet, el("div", {class:"card-foot"}, el("span", {class:"saved", text:"本人が見ると、期待を取り除けなくなります"}), el("button", {class:"ghost", type:"button", text:"協力者として表を開く", onclick:e => { sheet.hidden = !sheet.hidden; e.target.textContent = sheet.hidden ? "協力者として表を開く" : "表を閉じる"; }}))));
+    }
     const conf = el("input", {type:"text", id:"resetConfirm", placeholder:"やり直す"});
     const rmsg = el("span", {class:"saved"});
     out.push(el("section", {class:"card"}, el("div", {class:"card-head"}, el("h2", {text:"最初からやり直す"})),
@@ -616,7 +648,7 @@ function renderSetup() {
 }
 
 /* ---------- 書き出し（分析エンジンの CSV 形式） ---------- */
-const COLS = ["day","date","phase","outcome","sol","waso","tst","tib","se","sleep","rhr","rmssd","mood","stress","alcohol","coffee","offday","sick","cycle_day","taken","dose_hour","rating_order","qa","qb","pair_order"];
+const COLS = ["day","date","phase","outcome","sol","waso","tst","tib","se","sleep","rhr","rmssd","mood","stress","alcohol","coffee","offday","sick","cycle_day","taken","amount","dose_hour","belief","rating_order","qa","qb","pair_order"];
 function cycleDay(date) {
   const starts = Object.entries(days).filter(([, r]) => r.day?.period_start).map(([d]) => d);
   if (config.lastPeriod) starts.push(config.lastPeriod);
@@ -631,7 +663,9 @@ function rowFor(date, dayNo, phase) {
   return {day:dayNo, date, phase, outcome, sol:nn.sol, waso:nn.waso, tst:dv.tst, tib:dv.tib, se:dv.se, sleep:nn.sleep, rhr:nn.rhr, rmssd:nn.rmssd,
     mood:dd.mood, stress:dd.stress, alcohol:r.day ? (dd.alcohol ?? 0) : null, coffee:r.day && config.substance !== "caffeine" ? (dd.coffee ?? 0) : null,
     offday:r.day ? b(dd.offday) : null, sick:r.day ? b(dd.sick) : null, cycle_day:config.cycle ? cycleDay(date) : null,
-    taken:phase === "B" && r.day ? b(dd.taken) : null, dose_hour:phase === "B" && dd.taken && dd.dose ? Math.round(toHours(dd.dose)*100)/100 : null,
+    taken:phase !== "A" && r.day ? b(dd.taken) : null, amount:phase === "H" ? 0.5 : phase === "B" ? 1 : null,
+    dose_hour:phase !== "A" && dd.taken && dd.dose ? Math.round(toHours(dd.dose)*100)/100 : null,
+    belief:config.blinded && dd.belief_set ? dd.belief : null,
     rating_order:[dd.order, nn.order].filter(Boolean).join("|"), qa:dd.qa, qb:dd.qb, pair_order:r.day && dd.qa != null && dd.qb != null ? dd.pair_order : null};
 }
 function toCsv(rows) {
@@ -655,6 +689,7 @@ function command() {
   const bt = toHours(c.bedtime), wt = toHours(c.waketime);
   if (bt != null) parts.push(`--bedtime ${bt}`); if (wt != null) parts.push(`--waketime ${wt}`);
   if (c.cycle) parts.push(`--cycle-length ${c.cycleLength || 28}`);
+  if (c.blinded) parts.push("--blinded");
   return parts.join(" \\\n  ") + " \\\n  --out レポート.md";
 }
 function planCommand() {
@@ -665,6 +700,7 @@ function planCommand() {
 }
 function renderExport() {
   if (!config) return renderNoConfig();
+  if (config.blinded && dayInfo(today()).kind !== "after") return [el("div", {class:"notice warn", text:"中身を隠す実験は、実験の期間が終わってから書き出します。途中で書き出すと、どの日が本物だったかが見えてしまいます。"})];
   const {base, exp} = buildCsvs();
   const out = [];
   const item = (title, meta, filename, rows) => {

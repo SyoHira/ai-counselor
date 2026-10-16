@@ -51,6 +51,8 @@ def load(path: str) -> dict[str, np.ndarray]:
     data: dict[str, np.ndarray] = {}
     for name in rows[0]:
         if name in TEXT_COLUMNS:
+            if name in ("pair_order", "rating_order"):
+                data[name] = np.array([(r.get(name) or "").strip() for r in rows], dtype=object)
             continue
         vals = []
         for r in rows:
@@ -61,7 +63,10 @@ def load(path: str) -> dict[str, np.ndarray]:
             data[name] = arr
     data["day"] = data["day"].astype(int)
     if "phase" in rows[0]:
-        data["treat"] = np.array([1 if r["phase"].strip().upper() == "B" else 0 for r in rows])
+        ph = [r["phase"].strip().upper() for r in rows]
+        data["treat"] = np.array([1 if p_ in ("B", "H") else 0 for p_ in ph])
+        if "H" in ph and "amount" not in data:
+            data["amount"] = np.array([0.5 if p_ == "H" else 1.0 for p_ in ph])
     return data
 
 
@@ -76,7 +81,10 @@ def _substance(a):
 
 
 def cmd_analyze(a: argparse.Namespace) -> None:
+    from .cohort import CohortStore
+
     d = load(a.csv)
+    store = CohortStore(a.cohort) if a.cohort else None
     direction = -1 if a.lower_is_better else None
     res = analyze(
         d,
@@ -91,7 +99,13 @@ def cmd_analyze(a: argparse.Namespace) -> None:
         mid=a.mid,
         seed=a.seed,
         pd=not a.no_pd,
+        cohort=store,
+        client_id=a.client_id,
+        blinded=a.blinded,
+        consent=not a.no_consent,
     )
+    if store is not None:
+        store.save()
     blind = belief = None
     if a.blinded and "belief" in d:
         blind = blind_integrity(d["belief"], d["treat"])
@@ -198,6 +212,9 @@ def main(argv: list[str] | None = None) -> None:
     an.add_argument("--mid", type=float, help="意味のある差の大きさ（主要項目の単位。0〜10の項目は既定1点）")
     an.add_argument("--cycle-length", type=float, default=28.0, help="月経周期の長さ（日）")
     an.add_argument("--blinded", action="store_true", help="中身を隠す上級版")
+    an.add_argument("--cohort", help="複数人の要約を保存するファイル（例：cohort.json）。指定すると他の人の傾向を土台にする")
+    an.add_argument("--client-id", help="お客さんの番号（cohort の中で人を区別する）")
+    an.add_argument("--no-consent", action="store_true", help="この人の要約を cohort に保存しない")
     an.add_argument("--no-pd", action="store_true", help="記録に現れるまでの遅れを推定しない（遅れが無いと分かっている場合。検出力が上がる）")
     an.add_argument("--out")
     an.add_argument("--seed", type=int, default=0)

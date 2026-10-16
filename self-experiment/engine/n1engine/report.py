@@ -36,12 +36,13 @@ def _neutral_label(p_higher: float) -> str:
     return "はっきりしない"
 
 
-def _diff(r: OutcomeResult) -> str:
+def _diff(r: OutcomeResult, v=None) -> str:
     """差を、項目の単位で書く。対数にした項目は「何%」で書く。"""
     import math
 
+    v = v or r.v
     sign = r.direction or 1
-    m, lo, hi = r.v.effect_mean * sign, r.v.effect_low * sign, r.v.effect_high * sign
+    m, lo, hi = v.effect_mean * sign, v.effect_low * sign, v.effect_high * sign
     if sign < 0:
         lo, hi = hi, lo
     if r.log:
@@ -67,32 +68,50 @@ def render(*, item: str, outcome_label: str | None, res: Analysis, blinded: bool
     L.append(f"主要項目：{name}（{p.window.label}）　／　記録日数：{p.n_days}日　／　分析エンジン v{VERSION}")
     L.append("")
 
+    mv = res.pooled_v or p.v
     L.append("## 結論")
     L.append("")
-    if p.direction == 0:
-        L.append(f"**{_neutral_label(p.v.p_better)}**")
+    if res.pooled_v is not None:
+        L.append(f"同じ成分・同じ項目で試した方 {res.pooled['people'] - 1}人の記録の傾向を土台にして、**あなたの記録**から推定した結果です。結果はあなた1人についてのものです。")
         L.append("")
-        L.append(f"あなたの記録では、飲んだ期間の方が「{name}」が高かった確率は **{_pct(p.v.p_better)}** でした。")
+    if p.direction == 0:
+        L.append(f"**{_neutral_label(mv.p_better)}**")
+        L.append("")
+        L.append(f"あなたの場合、飲んだ期間の方が「{name}」が高かった確率は **{_pct(mv.p_better)}** でした。")
         L.append("")
     else:
-        L.append(f"**{p.v.label}**")
+        L.append(f"**{mv.label}**")
         L.append("")
-        L.append(f"あなたの記録では、飲んだ期間の方が「{name}」が良かった確率は **{_pct(p.v.p_better)}** でした。")
+        L.append(f"あなたの場合、飲んだ期間の方が「{name}」が良かった確率は **{_pct(mv.p_better)}** でした。")
         L.append("")
-        L.append(CLOSING[p.v.label])
+        L.append(CLOSING[mv.label])
         L.append("")
 
     L.append("## 数字で見る")
     L.append("")
-    L.append(f"- 差の大きさ：平均 **{_diff(p)}**")
+    L.append(f"- 差の大きさ：平均 **{_diff(p, mv)}**")
+    if res.pooled_v is not None:
+        L.append(f"  - あなたの記録だけで推定した場合：{_diff(p, p.v)}（良かった確率 {_pct(p.v.p_better)}）")
+        L.append("  - 他の方の傾向を土台にすると、短い記録でも揺れに振り回されにくくなります。土台の重みは、あなたの記録が確かなほど小さくなります。")
     if res.substance is not None and res.substance.pk is not None:
         L.append("  - 飲み続けて体内の量が安定したときの差です。飲み始めの数日と、やめた後に体に残っている数日は、残っている量に応じて計算に入れています。")
     mid = res.mid
     if p.direction != 0 and not p.log and mid:
-        L.append(f"- {mid:g}{'点' if p.unit == '0〜10' else p.unit}以上良かった確率：{_pct(p.v.p_meaningful)}")
+        L.append(f"- {mid:g}{'点' if p.unit == '0〜10' else p.unit}以上良かった確率：{_pct(mv.p_meaningful)}")
     L.append(f"- 前日の体調の引きずり：{p.v.rho_mean:.2f}（0なら毎日が独立、1に近いほど前日を強く引きずる）")
     L.append("")
     L.append("「90%の幅」は、本当の差がこの範囲に入っている見込みが90%という意味です。幅が0をまたいでいる場合は、差がない可能性も残っています。")
+    L.append("")
+
+    L.append("## 期待の分")
+    L.append("")
+    pl = res.pooled
+    if res.blinded:
+        L.append("中身を隠して飲んだので、「飲んだと分かっていたから」という期待の分は、記録の差に入っていません。")
+    elif pl is not None and pl["delta_estimated"]:
+        L.append(f"中身を隠して試した方 {pl['blinded_people']}人と、中身を知って試した方の記録を比べ、中身を知っていることで記録が動く分（期待の分）を推定しました：平均 {pl['delta_mean']:+.2f}（95%の幅 {pl['delta_low']:+.2f}〜{pl['delta_high']:+.2f}）。上の差は、この分を差し引いたあなたの差です。")
+    else:
+        L.append("中身を知って飲んだので、記録の差には期待の分が含まれている可能性があります。中身を隠して試した方の記録が集まると、その分を推定して差し引きます。今すぐ取り除くには、中身を隠す上級版（家族などに本物と空のカプセルを入れ替えてもらう）で試します。")
     L.append("")
 
     L.append("## 偶然と比べると")
@@ -151,7 +170,25 @@ def render(*, item: str, outcome_label: str | None, res: Analysis, blinded: bool
         else:
             L.append("遅れがあるかどうかは、この記録からははっきりしません。")
         L.append("")
-        L.append("前提：影響の大きさが体の中の量に比例する範囲で考えています（薬力学の作用部位モデル・間接反応モデルの考え方）。")
+        if p.excluded_lags:
+            longest = max(h for h, _ in p.pd_table if h not in p.excluded_lags)
+            L.append(f"あなたの実験の並びでは、{'・'.join(f'{h:g}日' for h in p.excluded_lags)}の遅れは、体調のゆるい変化と見分けられないため候補から外しました（{longest:g}日までを見ています）。もっと長い遅れを確かめるには、14日ずつの並びで試します。")
+            L.append("")
+        if res.priors_from_others:
+            L.append(f"遅れの見込みには、同じ成分・同じ項目で試した方 {res.priors_from_others}人の結果を事前の重みとして使っています。")
+            L.append("")
+
+    if p.shape_table:
+        L.append("## 量と反応の形")
+        L.append("")
+        L.append("記録への影響が体の中の量に比例するのか、量が増えると頭打ちになるのかも推定しました。")
+        L.append("")
+        L.append("| 形 | 見込み |")
+        L.append("|---|---|")
+        for lab, pr in p.shape_table:
+            L.append(f"| {lab} | {_pct(pr)} |")
+        L.append("")
+        L.append("半分の量の期間がある並び（42日）で試すと、この形がはっきり見えます。")
         L.append("")
 
     L.append("## そろえて比べたもの")
@@ -193,6 +230,14 @@ def render(*, item: str, outcome_label: str | None, res: Analysis, blinded: bool
 
     L.append("## 計算の確認")
     L.append("")
+    fc = p.fitcheck
+    if fc:
+        L.append(f"**あなたの記録への当てはまり**：前日までの記録から毎日の記録を予測し、実際の記録が90%の予測幅に入った日は {_pct(fc['coverage90'])}（{fc['n']}日、目安90%）。前後の日との規則性の残り：p={fc['ljung_box_p']:.2f}、期間ごとのずれ：p={fc.get('block_p', 1):.2f}（どちらかが0.025未満なら、式が記録に合っていない）。")
+        if fc["ok"]:
+            L.append("この分析の式は、あなたの記録に合っていました。")
+        else:
+            L.append("この分析の式が、あなたの記録に十分合っていない可能性があります。担当者が記録を見直し、必要なら式を変えて分析し直します。")
+        L.append("")
     dg = p.fit.diag or {}
     t = dg.get("treatment")
     if t:
@@ -213,12 +258,21 @@ def render(*, item: str, outcome_label: str | None, res: Analysis, blinded: bool
             L.append(f"- 実際の中身をそろえた上で、「本物を飲んだと思った日」は記録が平均 {belief['belief_coef']:+.1f}点 動いていました（目安）。")
         L.append("")
 
-    L.append("## この分析で言えないこと")
+    qd = res.quantum
+    if qd:
+        L.append("## 研究：質問の順番とあなたの答え方")
+        L.append("")
+        L.append(f"毎日の「体の調子は良かったか」「気分は良かったか」の2問を、順番を入れ替えて聞いていました。同意をいただいた {qd['people']}人の答えをあわせ、量子確率モデル（答えるたびに心の状態が質問の軸に移ると考えるモデル）で分析しました。これは研究で、上の結果とは関係しません。")
+        L.append("")
+        L.append(f"- 「体の調子は良かった」と答えた割合：先に聞いた日 {_pct(qd['obs_first'])}、気分の後に聞いた日 {_pct(qd['obs_second'])}（モデルの予測 {_pct(qd['pred_first'])} → {_pct(qd['pred_second'])}）")
+        L.append(f"- あなたの状態の角度 θ：{qd['theta']:.2f}（90%の幅 {qd['theta_low']:.2f}〜{qd['theta_high']:.2f}）。2問の軸のなす角 φ（全員共通）：{qd['phi']:.2f}")
+        L.append(f"- {qd['people']}人の答え全体では、{'量子確率モデル' if qd['better'] == 'quantum' else '順番に左右されない古典的なモデル'}の方がよく当てはまりました（AIC：量子 {qd['aic_quantum']:.1f}、古典 {qd['aic_classical']:.1f}）。")
+        L.append("")
+
+    L.append("## この結果の範囲")
     L.append("")
-    if not blinded:
-        L.append("- 中身を知った上で飲んでいるため、「飲んだから」なのか「飲んだと分かっていたから」なのかは区別できません。区別するには、中身を隠す上級版が必要です。")
-    L.append("- この結果はあなたの記録についてのものです。他の人に当てはまるかどうか、成分そのものの働きについては何も言えません。")
-    L.append("- 体調が変わった理由を特定するものではありません。気になる症状がある場合は医療機関に相談してください。")
+    L.append("- この結果は、あなたの記録から推定した、あなたの差です。他の方の記録は推定の土台に使っていますが、他の方の結果や成分そのものの働きを示すものではありません。")
+    L.append("- 体調が変わった理由を診断するものではありません。気になる症状がある場合は医療機関に相談してください。")
     L.append("")
 
     L.append("## 方法")

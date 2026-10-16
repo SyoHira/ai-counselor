@@ -302,7 +302,8 @@ def test_pd_lag_is_recovered_when_present():
         X, names = build_design(day, treat)
         f = fit_chains(y, X, day, names, n_draws=200, n_burn=200, seed=s,
                        treat_options=pdm.options(treat), option_logprior=pdm.log_prior())
-        hits += np.mean(f.lag_draws > 0) > 0.8
+        lag_m, _ = pdm.marginals(f.lag_draws)
+        hits += (1 - lag_m[0]) > 0.8
     assert hits >= 5
 
 
@@ -341,3 +342,91 @@ def test_pooling_shrinks_toward_population_mean():
     est = np.array([2.5, -0.5, 0.8, 0.6, 0.7])
     r = pool(est, np.full(5, 0.8), n_draws=1500)
     assert abs(r["individual_mean"][0] - r["mu_mean"]) < abs(est[0] - r["mu_mean"])
+
+
+# ---------------------------------------------------------------- v0.4.0 複数人を前提にした個別の分析
+
+
+def test_identifiable_drops_lags_confounded_with_trend():
+    from n1engine.domain import pd as pdm
+
+    alt = np.array([0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1] * 5, dtype=float)  # 1〜2日で入れ替わる並び
+    day = np.arange(1, len(alt) + 1)
+    keep = pdm.identifiable(pdm.options(alt, shapes=(None,)), day)
+    assert keep[0] and not keep[-1]
+    abba = np.repeat([0, 1, 1, 0], 7).astype(float)
+    keep2 = pdm.identifiable(pdm.options(abba, shapes=(None,)), np.arange(1, 29))
+    assert keep2[:4].all()  # 2日までの遅れは28日の ABBA で見分けられる
+
+
+def test_cohort_em_prior_concentrates_on_shared_lag():
+    from n1engine.cohort import _em
+    from n1engine.domain import pd as pdm
+
+    lik = np.array([0.05, 0.05, 0.1, 0.4, 0.2, 0.1, 0.1])
+    pi = _em([lik] * 10, pdm.lag_probs_default())
+    assert pi[3] > 0.3 and pi[0] < 0.4
+
+
+def test_expectation_offset_is_removed_when_blinded_people_exist():
+    from n1engine.research.population import pool
+
+    rng = np.random.default_rng(0)
+    K = 40
+    theta = rng.normal(0.6, 0.3, K)
+    op = np.array([0] * 20 + [1] * 20, dtype=float)
+    se = np.full(K, 0.25)
+    est = rng.normal(theta + 0.6 * op, se)
+    r = pool(est, se, open_label=op, n_draws=1500)
+    assert r["delta_estimated"] and 0.1 < r["delta_mean"] < 1.1
+
+
+def test_pipeline_with_cohort_reports_only_own_result(tmp_path):
+    from n1engine.cohort import CohortStore
+    from n1engine.pipeline import analyze
+    from n1engine.report import render
+
+    store = CohortStore(tmp_path / "c.json")
+    for i in range(4):
+        day, treat, y, _ = fake_experiment(0.8, seed=40 + i)
+        res = analyze({"day": day, "treat": treat, "outcome": y}, n_draws=150, null_sims=10, secondary=False,
+                      cohort=store, client_id=f"c{i}")
+    assert res.pooled is not None and res.pooled_v is not None
+    md = render(item="テスト", outcome_label="寝つき", res=res, blinded=False)
+    assert "他の方の結果や成分そのものの働きを示すものではありません" in md
+    for word in ("効果", "効く", "効力", "効き"):
+        assert word not in md
+
+
+def test_fit_check_runs_and_is_mostly_ok_on_well_specified_data():
+    from n1engine.checks import check
+    from n1engine.model import fit_chains
+
+    oks = 0
+    for s in range(5):
+        day, treat, y, _ = fake_experiment(0.5, rho=0.5, sigma=1.0, seed=60 + s)
+        X, names = build_design(day, treat)
+        f = fit_chains(y, X, day, names, n_draws=200, n_burn=200, seed=s, robust=True)
+        oks += check(f, y, X, day)["ok"]
+    assert oks >= 4
+
+
+def test_half_dose_phase_loads_as_half_amount(tmp_path):
+    from n1engine.run import load
+
+    p = tmp_path / "h.csv"
+    p.write_text("day,phase,outcome\n1,A,5\n2,H,6\n3,B,7\n", encoding="utf-8")
+    d = load(str(p))
+    assert d["treat"].tolist() == [0, 1, 1] and d["amount"].tolist() == [1.0, 0.5, 1.0]
+
+
+def test_quantum_hierarchical_recovers_model_and_person_angles():
+    from n1engine.research.quantum import compare_hier, simulate_people_classical, simulate_people_quantum
+
+    rng = np.random.default_rng(3)
+    tabs, th = simulate_people_quantum(12, 14, 0.9, 0.7, 0.2, rng)
+    r = compare_hier(tabs)
+    assert r["better"] == "quantum"
+    est = np.array([p["theta"] for p in r["quantum"]["people"]])
+    assert np.sqrt(np.mean((est - th) ** 2)) < 0.25
+    assert compare_hier(simulate_people_classical(12, 14, np.array([0.35, 0.15, 0.2, 0.3]), 20, rng))["better"] == "classical"

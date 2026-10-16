@@ -33,9 +33,18 @@
   0.5 では遅れが無いときの検出が 50% → 37% に落ち、0.75 では 47% にとどまり、
   2日の遅れがあるときの推定は 0.62（遅れを考えない）→ 0.78 に戻った。
 
+量と反応の形（v0.4.0）
+  影響が量に比例するとは限らない。量が増えると頭打ちになる形（Emax モデル）を、
+  安定状態の量を 1 にそろえた次の式で表し、頭打ちの強さ c も候補から推定する。
+
+      記録への影響の形 f(z) = z (1 + c) / (z + c)      z = 記録に届く量（0〜1）、f(1) = 1
+      c = ∞（比例）・1・0.25（強く頭打ち）
+
+  「飲む・飲まない」の2通りだけでは形の違いはほとんど見えないので、半分の量の期間を入れる
+  並び（design.py の DOSE_SEQUENCES）を用意した。複数の人の記録が溜まると、
+  同じ成分の他の人の結果から形と遅れの事前の重みを作り、1人の推定を補う（cohort.py）。
+
 限界
-  - 影響が量に比例する範囲を前提にしている。飽和（Emax）は、飲む量が1種類しかない
-    1人実験では推定できない。
   - 遅れの候補は7つに限っている。7日より長い遅れは「7日」に寄せて推定される。
 """
 
@@ -45,6 +54,16 @@ import numpy as np
 
 PD_HALF_DAYS = (0.0, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0)
 PRIOR_NO_LAG = 0.75
+SHAPES = (None, 1.0, 0.25)  # None = 比例
+SHAPE_PRIOR = (0.5, 0.25, 0.25)
+SHAPE_LABELS = ("比例", "ゆるく頭打ち", "強く頭打ち")
+
+
+def shape(z: np.ndarray, c: float | None) -> np.ndarray:
+    z = np.asarray(z, dtype=float)
+    if c is None:
+        return z
+    return z * (1 + c) / (z + c)
 
 
 def lam(half_days: float) -> float:
@@ -62,17 +81,53 @@ def lag_filter(x: np.ndarray, half_days: float) -> np.ndarray:
     return out
 
 
-def options(x_full: np.ndarray, halves=PD_HALF_DAYS) -> np.ndarray:
-    """遅れの候補ごとの曝露量（行=候補、列=1日目からの日）。"""
-    return np.vstack([lag_filter(x_full, h) for h in halves])
+def options(x_full: np.ndarray, halves=PD_HALF_DAYS, shapes=SHAPES) -> np.ndarray:
+    """遅れ×形の候補ごとの曝露量（行=候補、列=1日目からの日）。行の番号 = 遅れの番号 × 形の数 + 形の番号。"""
+    return np.vstack([shape(lag_filter(x_full, h), c) for h in halves for c in shapes])
 
 
-def log_prior(halves=PD_HALF_DAYS, p0: float = PRIOR_NO_LAG) -> np.ndarray:
+def lag_probs_default(p0: float = PRIOR_NO_LAG, halves=PD_HALF_DAYS) -> np.ndarray:
     k = len(halves) - 1
-    return np.log(np.array([p0] + [(1 - p0) / k] * k))
+    return np.array([p0] + [(1 - p0) / k] * k)
+
+
+def log_prior(halves=PD_HALF_DAYS, p0: float = PRIOR_NO_LAG, lag_probs=None, shape_probs=None, shapes=SHAPES) -> np.ndarray:
+    lp = np.asarray(lag_probs if lag_probs is not None else lag_probs_default(p0, halves), dtype=float)
+    sp = np.asarray(shape_probs if shape_probs is not None else SHAPE_PRIOR, dtype=float)
+    with np.errstate(divide="ignore"):
+        return np.log(np.outer(lp, sp).ravel())
+
+
+MIN_CONTRAST = 0.5
+
+
+def identifiable(opts_rows: np.ndarray, day: np.ndarray, min_ratio: float = MIN_CONTRAST) -> np.ndarray:
+    """その人の並びで見分けられる候補だけを残す（v0.4.0）。
+
+    遅れが長いと、体内量は実験の初めから少しずつ上がるだけの形になり、時間の流れ（体調のゆるい変化）と
+    見分けがつかなくなる。そのまま候補に残すと、時間の流れを「長い遅れの差」と取り違え、差を大きく見積もる
+    （公開データ nof1kit のメラトニン70日で、遅れを入れると差が 0.07 → 0.5 に膨らんだ）。
+    各候補の体内量から時間の流れ（切片・直線）を除いた残りのばらつきが、遅れなしの候補の
+    min_ratio 未満なら、その並びでは見分けられないとして外す。0.5 は suitability の「持ち越しを計算に入れて実施」と同じ基準。
+    """
+    day = np.asarray(day, dtype=float)
+    Z = np.column_stack([np.ones(len(day)), (day - day.mean()) / max(np.ptp(day), 1)])
+    sd = []
+    for row in opts_rows:
+        resid = row - Z @ np.linalg.lstsq(Z, row, rcond=None)[0]
+        sd.append(np.std(resid))
+    sd = np.array(sd)
+    return sd >= min_ratio * sd[0]
+
+
+def marginals(draws: np.ndarray, halves=PD_HALF_DAYS, shapes=SHAPES) -> tuple[np.ndarray, np.ndarray]:
+    """候補番号の事後の抽出から、遅れと形それぞれの事後確率を出す。"""
+    counts = np.bincount(draws, minlength=len(halves) * len(shapes)).reshape(len(halves), len(shapes))
+    p = counts / counts.sum()
+    return p.sum(axis=1), p.sum(axis=0)
 
 
 def posterior_table(lag_draws: np.ndarray, halves=PD_HALF_DAYS) -> list[tuple[float, float]]:
     """遅れの半減期ごとの事後確率。"""
-    n = len(lag_draws)
-    return [(h, float(np.sum(lag_draws == i) / n)) for i, h in enumerate(halves)]
+    lag, _ = marginals(lag_draws, halves)
+    return [(h, float(p)) for h, p in zip(halves, lag)]

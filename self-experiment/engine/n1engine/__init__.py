@@ -4,4 +4,4 @@
 CHANGELOG.md に「何を・なぜ変えたか・根拠」を残す。
 """
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"

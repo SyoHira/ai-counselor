@@ -81,6 +81,8 @@ VARIABLES: dict[str, Variable] = {
         # ---- 体内量を変えるもの ----
         Variable("dose_hour", "実際に飲んだ時刻", "薬物動態", "時（21.5=21時30分）", MODIFIER, None, 0,
                  note="無い日は予定の時刻で計算する。"),
+        Variable("amount", "その日の量（いつも=1、半分=0.5）", "薬物動態", "倍", MODIFIER, None, 0,
+                 note="半分の量の期間（H）がある並びで使う。体内量は量に比例する。"),
         Variable("taken", "飲む日に飲んだか", "薬物動態", "1/0", MODIFIER, None, 0,
                  note="0（飲み忘れ）の日はその日の分を体内量に入れない。割り付け（飲む日・飲まない日）は変えない。"),
     )

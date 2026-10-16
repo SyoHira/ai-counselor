@@ -27,6 +27,11 @@ BALANCED_SEQUENCES = ("ABBA", "BAAB")
 # ABABBABA は重なりが 0.15 以下で、時間の流れとも偏らない（B の平均位置 = A の平均位置）。
 CYCLE_SEQUENCES = ("ABABBABA", "BABAABAB")
 
+# 量と反応の形を見る42日（7日×6期間、H = 半分の量）。前後対称なので、時間の流れが
+# どの量にも均等にかかる（A・H・B それぞれの平均位置が同じ）。
+DOSE_SEQUENCES = ("AHBBHA", "BHAAHB")
+DOSE_OF_PHASE = {"A": 0.0, "H": 0.5, "B": 1.0}
+
 
 @dataclass(frozen=True)
 class Day:
@@ -41,6 +46,7 @@ def make_schedule(
     seed: int | None = None,
     sequence: str | None = None,
     cycle: bool = False,
+    dose_levels: bool = False,
 ) -> list[Day]:
     """実験の日程を作る。
 
@@ -51,9 +57,10 @@ def make_schedule(
     if block_len % 7:
         raise ValueError("期間の長さは7日の倍数にする（曜日をそろえるため）")
     rng = random.Random(seed)
-    seq = sequence or rng.choice(CYCLE_SEQUENCES if cycle else BALANCED_SEQUENCES)
-    if seq not in BALANCED_SEQUENCES + CYCLE_SEQUENCES:
-        raise ValueError(f"並びは {BALANCED_SEQUENCES + CYCLE_SEQUENCES} のどれか: {seq}")
+    pool = DOSE_SEQUENCES if dose_levels else CYCLE_SEQUENCES if cycle else BALANCED_SEQUENCES
+    seq = sequence or rng.choice(pool)
+    if seq not in BALANCED_SEQUENCES + CYCLE_SEQUENCES + DOSE_SEQUENCES:
+        raise ValueError(f"並びは {BALANCED_SEQUENCES + CYCLE_SEQUENCES + DOSE_SEQUENCES} のどれか: {seq}")
 
     days = []
     n = 0

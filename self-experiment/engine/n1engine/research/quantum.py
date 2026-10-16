@@ -121,3 +121,114 @@ def simulate_quantum(theta: float, phi: float, n_per_order: int, rng) -> np.ndar
 
 def simulate_classical(p: np.ndarray, n_per_order: int, rng) -> np.ndarray:
     return np.stack([rng.multinomial(n_per_order, p).reshape(2, 2) for _ in range(2)]).astype(float)
+
+
+# ---------------------------------------------------------------- 複数人の階層モデル（v0.4.0）
+#
+# 1人分の答え（各順番14件ほど）では、古典と量子を見分けられない。そこで、
+#   - 質問の軸のなす角 φ は質問そのものの性質なので、全員で共通
+#   - 状態の角度 θ_i は人ごとに違い、全体の分布 正規(m, s²) から出る
+# と考え、全員の答えを同時に使って φ・m・s を推定し、その上で各人の θ_i を推定する
+# （経験ベイズ。θ は格子の上で数え上げるので近似が入らない）。
+# 鏡に映した解（θ→π−θ, φ→π−φ）は同じ予測になるので、φ は 0〜π/2 に限る。
+# 古典の側も同じく階層にする：各人の同時確率 p_i ~ ディリクレ(α p̄)（順番に関係なし）。
+
+THETA_GRID = np.linspace(0, np.pi, 181)[:-1] + np.pi / 360
+
+
+def _probs_grid(phi: float, theta=THETA_GRID) -> np.ndarray:
+    """θ の格子すべてについての予測 [格子, 順番, Aの答え, Bの答え]（_quantum_probs を式で展開したもの）。"""
+    c2, s2 = np.cos(theta) ** 2, np.sin(theta) ** 2
+    cd2, sd2 = np.cos(theta - phi) ** 2, np.sin(theta - phi) ** 2
+    cf2, sf2 = np.cos(phi) ** 2, np.sin(phi) ** 2
+    p = np.empty((len(theta), 2, 2, 2))
+    p[:, 0, 0, 0], p[:, 0, 0, 1], p[:, 0, 1, 0], p[:, 0, 1, 1] = c2 * cf2, c2 * sf2, s2 * sf2, s2 * cf2
+    p[:, 1, 0, 0], p[:, 1, 1, 0], p[:, 1, 0, 1], p[:, 1, 1, 1] = cd2 * cf2, cd2 * sf2, sd2 * sf2, sd2 * cf2
+    return p
+
+
+def _person_ll_grid(t: np.ndarray, phi: float) -> np.ndarray:
+    """1人分の表について、θ の格子ごとの対数尤度。"""
+    p = np.clip(_probs_grid(phi), 1e-12, 1)
+    return np.tensordot(np.log(p), t, axes=([1, 2, 3], [0, 1, 2]))
+
+
+def _log_prior_grid(m: float, s: float) -> np.ndarray:
+    lp = -0.5 * ((THETA_GRID - m) / s) ** 2
+    return lp - np.log(np.sum(np.exp(lp - lp.max()))) - lp.max()
+
+
+def fit_quantum_hier(tables: list[np.ndarray]) -> dict:
+    from scipy.special import logsumexp
+
+    def neg(params, cache={}):
+        phi, m, ls = params
+        if not (0.01 < phi < np.pi / 2 and 0 < m < np.pi and -4 < ls < 1.5):
+            return 1e12
+        key = round(phi, 6)
+        if key not in cache:
+            cache.clear()
+            cache[key] = [_person_ll_grid(t, phi) for t in tables]
+        lp = _log_prior_grid(m, np.exp(ls))
+        return -sum(logsumexp(lp + ll) for ll in cache[key])
+
+    best = None
+    for phi0 in (0.3, 0.7, 1.1, 1.4):
+        for m0 in (0.5, 1.5, 2.5):
+            r = minimize(neg, [phi0, m0, np.log(0.3)], method="Nelder-Mead", options={"xatol": 1e-4, "fatol": 1e-6, "maxiter": 400})
+            if best is None or r.fun < best.fun:
+                best = r
+    phi, m, ls = best.x
+    lp = _log_prior_grid(m, np.exp(ls))
+    people = []
+    for t in tables:
+        ll = _person_ll_grid(t, phi)
+        w = np.exp(lp + ll - np.max(lp + ll))
+        w /= w.sum()
+        th_mean = float(np.sum(w * THETA_GRID))
+        cdf = np.cumsum(w)
+        lo, hi = THETA_GRID[np.searchsorted(cdf, 0.05)], THETA_GRID[min(np.searchsorted(cdf, 0.95), len(THETA_GRID) - 1)]
+        pred = np.tensordot(w, _probs_grid(phi), axes=1)
+        people.append({"theta": th_mean, "theta_low": float(lo), "theta_high": float(hi), "pred": pred})
+    return {"loglik": -best.fun, "k": 3, "phi": float(phi), "m": float(m), "s": float(np.exp(ls)), "people": people}
+
+
+def fit_classical_hier(tables: list[np.ndarray]) -> dict:
+    from scipy.special import gammaln
+
+    counts = [t.sum(axis=0).ravel() for t in tables]  # 順番に関係なしなので2つの順番を足す
+
+    def neg(params):
+        z = np.r_[params[:3], 0.0]
+        pbar = np.exp(z - z.max())
+        pbar /= pbar.sum()
+        a = np.exp(params[3])
+        tot = 0.0
+        for c in counts:
+            tot += gammaln(a) - gammaln(a + c.sum()) + np.sum(gammaln(a * pbar + c) - gammaln(a * pbar))
+        return -tot
+
+    best = None
+    for a0 in (0.0, 2.0, 4.0):
+        r = minimize(neg, [0, 0, 0, a0], method="Nelder-Mead", options={"maxiter": 2000, "xatol": 1e-5, "fatol": 1e-7})
+        if best is None or r.fun < best.fun:
+            best = r
+    return {"loglik": -best.fun, "k": 4}
+
+
+def compare_hier(tables: list[np.ndarray]) -> dict:
+    """複数人の答えで、量子（階層）と古典（階層）を比べ、各人の θ_i と予測を返す。"""
+    q = fit_quantum_hier(tables)
+    c = fit_classical_hier(tables)
+    aic_q, aic_c = 2 * q["k"] - 2 * q["loglik"], 2 * c["k"] - 2 * c["loglik"]
+    return {"quantum": q, "classical": c, "aic_quantum": aic_q, "aic_classical": aic_c,
+            "better": "quantum" if aic_q < aic_c else "classical", "people": len(tables)}
+
+
+def simulate_people_quantum(n_people: int, n_per_order: int, phi: float, m: float, s: float, rng):
+    thetas = np.clip(rng.normal(m, s, n_people), 0.01, np.pi - 0.01)
+    return [simulate_quantum(th, phi, n_per_order, rng) for th in thetas], thetas
+
+
+def simulate_people_classical(n_people: int, n_per_order: int, pbar: np.ndarray, alpha: float, rng):
+    return [simulate_classical(rng.dirichlet(alpha * pbar), n_per_order, rng) for _ in range(n_people)]

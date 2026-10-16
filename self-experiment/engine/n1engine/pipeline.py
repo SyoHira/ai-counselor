@@ -20,7 +20,9 @@ from .domain import pd as pdm
 from .domain.pk import Window, daily_exposure, fill_phases, residual_share, suitability, washout_days, window_for
 from .domain.substances import Substance
 from .domain.variables import VARIABLES, confounders_in, derive, responses_in, transformed
-from .model import Fit, Verdict, build_design, fit_chains, verdict
+from . import checks
+from . import cohort as coh
+from .model import Fit, Verdict, build_design, fit_chains, verdict, verdict_draws
 from .simulate import null_check
 
 RATING_UNIT = "0〜10"
@@ -42,6 +44,13 @@ class OutcomeResult:
     pd_table: list | None = None  # 記録に現れるまでの遅れ（半減期・日, 事後確率）
     pd_mode: float | None = None
     outlier_days: list | None = None  # 重みを大きく下げた日
+    shape_table: list | None = None  # 量と反応の形（ラベル, 事後確率）
+    lag_probs: list | None = None
+    shape_probs: list | None = None
+    fitcheck: dict | None = None  # その人の記録での当てはまり（checks.py）
+    excluded_lags: list | None = None  # その人の並びでは見分けられないため外した遅れの候補
+    lag_lik: list | None = None
+    shape_lik: list | None = None
 
 
 @dataclass
@@ -59,6 +68,12 @@ class Analysis:
     washout: int | None
     cycle_overlap: float | None
     notes: list[str] = field(default_factory=list)
+    pooled: dict | None = None  # 複数人を使ったその人の推定（cohort.individual の結果）
+    pooled_v: Verdict | None = None
+    own_v: Verdict | None = None  # その人の記録だけの推定（比べるため）
+    blinded: bool = False
+    priors_from_others: int = 0
+    quantum: dict | None = None  # 研究層：質問の順番とその人の答え方
 
 
 def _scale(y: np.ndarray, treat: np.ndarray, unit: str) -> tuple[np.ndarray, float, float]:
@@ -86,16 +101,18 @@ def full_exposure(d, substance, dose_hour, w) -> np.ndarray:
         a = np.full(len(full), np.nan)
         a[day - 1] = np.asarray(d[key], dtype=float)
         return a
-    dh, tk = spread("dose_hour"), spread("taken")
+    dh, tk, am = spread("dose_hour"), spread("taken"), spread("amount")
     if substance is not None and substance.pk is not None:
-        return daily_exposure(full, t, substance.pk, dose_hour, w, dh, tk)
+        return daily_exposure(full, t, substance.pk, dose_hour, w, dh, tk, am)
     x = t.astype(float)
+    if am is not None:
+        x = x * np.where(np.isnan(am), 1.0, am)
     if tk is not None:
         x[(t == 1) & (tk == 0)] = 0.0
     return x
 
 
-def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, dose_hour, bedtime, waketime, seed, n_draws, pd=True, robust=True):
+def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, dose_hour, bedtime, waketime, seed, n_draws, pd=True, robust=True, lag_probs=None, shape_probs=None):
     var = VARIABLES.get(key)
     unit = var.unit if var else RATING_UNIT
     timing = (var.timing if var and var.timing else None) or timing
@@ -108,19 +125,40 @@ def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, 
     y, sc, _ = _scale(y_raw, d["treat"], unit)
     X, names = build_design(d["day"], exposure, X_conf)
     kw = {"robust": robust}
+    excluded_lags = []
     if pd:
-        kw.update(treat_options=opts, option_logprior=pdm.log_prior())
+        lp = pdm.log_prior(lag_probs=lag_probs, shape_probs=shape_probs)
+        keep = pdm.identifiable(opts, d["day"])
+        lp = np.where(keep, lp, -np.inf)
+        ns = len(pdm.SHAPES)
+        excluded_lags = [h for i, h in enumerate(pdm.PD_HALF_DAYS) if not keep[i * ns]]
+        kw.update(treat_options=opts, option_logprior=lp)
     f = fit_chains(y, X, d["day"], names, n_draws=n_draws, seed=seed, **kw)
     j = names.index("treatment")
+    if pd:
+        mode0 = int(np.bincount(f.lag_draws, minlength=opts.shape[0]).argmax())
+        X[:, j] = opts[mode0]
+    fitcheck = checks.check(f, y, X, d["day"], seed=seed)  # 元の尺度に戻す前に、その人の記録で当てはまりを確かめる
     f.beta_draws[:, j] *= sc
     f.sigma_draws *= sc
     v = verdict(f, direction=direction if direction else 1, mid=mid if mid is not None else 0.0)
-    pd_table = pd_mode = None
+    pd_table = pd_mode = shape_table = None
+    lag_m = shape_m = lag_lik = shape_lik = None
     if pd:
-        pd_table = pdm.posterior_table(f.lag_draws)
-        mode = int(np.bincount(f.lag_draws, minlength=len(pdm.PD_HALF_DAYS)).argmax())
-        pd_mode = pdm.PD_HALF_DAYS[mode]
-        X[:, j] = opts[mode]  # 偶然との比較は、最もありそうな遅れの列で行う
+        lag_m, shape_m = pdm.marginals(f.lag_draws)
+        prior_lag = np.asarray(lag_probs if lag_probs is not None else pdm.lag_probs_default())
+        prior_shape = np.asarray(shape_probs if shape_probs is not None else pdm.SHAPE_PRIOR)
+        keep_lag = np.array([h not in excluded_lags for h in pdm.PD_HALF_DAYS])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ll = np.where(keep_lag, lag_m / np.where(prior_lag > 0, prior_lag, 1), 0.0)
+            lag_lik = ll / ll.sum() if ll.sum() > 0 else None
+            sl = shape_m / prior_shape
+            shape_lik = sl / sl.sum()
+        pd_table = [(h, float(pp)) for h, pp in zip(pdm.PD_HALF_DAYS, lag_m)]
+        shape_table = [(lab, float(pp)) for lab, pp in zip(pdm.SHAPE_LABELS, shape_m)]
+        mode = int(np.bincount(f.lag_draws, minlength=opts.shape[0]).argmax())
+        pd_mode = pdm.PD_HALF_DAYS[mode // len(pdm.SHAPES)]
+        X[:, j] = opts[mode]  # 偶然との比較は、最もありそうな遅れ・形の列で行う
     outliers = None
     if robust and f.weight_mean is not None:
         outliers = [int(dd) for dd, wv in zip(f.weight_day, f.weight_mean) if wv < 0.5]
@@ -139,6 +177,13 @@ def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, 
         pd_table=pd_table,
         pd_mode=pd_mode,
         outlier_days=outliers,
+        shape_table=shape_table,
+        lag_probs=None if lag_m is None else lag_m.tolist(),
+        shape_probs=None if shape_m is None else shape_m.tolist(),
+        fitcheck=fitcheck,
+        excluded_lags=excluded_lags,
+        lag_lik=None if lag_lik is None else lag_lik.tolist(),
+        shape_lik=None if shape_lik is None else shape_lik.tolist(),
     )
     return res, (y, X, names)
 
@@ -161,6 +206,10 @@ def analyze(
     secondary: bool = True,
     pd: bool = True,
     robust: bool = True,
+    cohort: "coh.CohortStore | None" = None,
+    client_id: str | None = None,
+    blinded: bool = False,
+    consent: bool = True,
 ) -> Analysis:
     d = derive(d)
     if primary not in d:
@@ -173,7 +222,12 @@ def analyze(
     if mid is None and (pvar is None or pvar.unit == RATING_UNIT):
         mid = 1.0
     pdir = direction if direction is not None else (pvar.better if pvar else 1)
-    prim, (y, X, names) = _fit_outcome(d, primary, timing, pdir, mid, conf, None, substance, dose_hour, bedtime, waketime, seed, n_draws, pd, robust)
+    sub_key = substance.key if substance is not None else "none"
+    others = cohort.others(sub_key, primary, client_id or "") if cohort is not None else []
+    lag_p = shape_p = None
+    if others:
+        lag_p, shape_p = coh.priors_from(others)
+    prim, (y, X, names) = _fit_outcome(d, primary, timing, pdir, mid, conf, None, substance, dose_hour, bedtime, waketime, seed, n_draws, pd, robust, lag_p, shape_p)
 
     sig = float(prim.fit.sigma_draws.mean()) / prim.scale
     null = null_check(y, X, d["day"], names, prim.v.rho_mean, sig, direction=pdir or 1, n_sims=null_sims, seed=seed)
@@ -202,7 +256,33 @@ def analyze(
         ss = np.sum((ex - ex.mean()) ** 2)
         overlap = float(np.sqrt(max(0.0, 1 - np.sum((ex - fitted) ** 2) / ss))) if ss > 0 else None
 
+    pooled = pooled_v = quantum = None
+    own_v = prim.v
+    if cohort is not None:
+        dr = prim.fit.draws("treatment")
+        qt = []
+        if all(k in d for k in ("qa", "qb", "pair_order")):
+            from .research.quantum import table_from_records
+
+            qt = table_from_records(d["qa"], d["qb"], d["pair_order"]).ravel().tolist()
+        own = coh.Summary(client_id=client_id or "self", substance=sub_key, outcome=primary, blinded=blinded,
+                          est=float(dr.mean()), se=float(dr.std()), n_days=prim.n_days,
+                          lag_probs=prim.lag_probs or [], shape_probs=prim.shape_probs or [], consent=consent, qtable=qt,
+                          lag_lik=prim.lag_lik or [], shape_lik=prim.shape_lik or [])
+        pooled = coh.individual(own, others, seed=seed)
+        quantum = coh.quantum_individual(own, cohort.items)
+        if pooled is not None:
+            pooled_v = verdict_draws(pooled["theta_draws"], pdir or 1, mid if mid is not None else 0.0, prim.v.rho_mean)
+        if consent:
+            cohort.upsert(own)
+
     return Analysis(
+        pooled=pooled,
+        pooled_v=pooled_v,
+        quantum=quantum,
+        own_v=own_v,
+        blinded=blinded,
+        priors_from_others=len(others),
         mid=mid,
         primary=prim,
         secondary=secs,

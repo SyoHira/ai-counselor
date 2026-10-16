@@ -346,7 +346,12 @@ INTERVAL_QUANTILES = (0.05, 0.95)
 
 
 def verdict(f: Fit, direction: int = 1, mid: float = 1.0) -> Verdict:
-    eff = f.draws("treatment") * direction
+    return verdict_draws(f.draws("treatment"), direction, mid, float(f.rho_draws.mean()))
+
+
+def verdict_draws(draws: np.ndarray, direction: int = 1, mid: float = 1.0, rho_mean: float = float("nan")) -> Verdict:
+    """差の抽出から判定を作る（1人分の推定にも、複数人を使った推定にも使う）。"""
+    eff = np.asarray(draws) * direction
     p_better = float(np.mean(eff > 0))
     label = "はっきりしない"
     for threshold, text in LABELS:
@@ -364,6 +369,6 @@ def verdict(f: Fit, direction: int = 1, mid: float = 1.0) -> Verdict:
         effect_mean=float(eff.mean()),
         effect_low=float(np.quantile(eff, INTERVAL_QUANTILES[0])),
         effect_high=float(np.quantile(eff, INTERVAL_QUANTILES[1])),
-        rho_mean=float(f.rho_draws.mean()),
+        rho_mean=rho_mean,
         label=label,
     )

@@ -24,6 +24,13 @@
   pooling   複数人の1人実験をまとめる階層モデル（research/population.py）
   quantum   質問の順番の量子モデル（research/quantum.py）が、生成したモデルを見分けられるか
 
+  v0.4.0 で追加
+  cohort    複数人を前提にした、その人の推定（cohort.py）：1人だけの推定と比べた誤差・幅・遅れの見分け
+  expect    期待の分 δ：中身を隠した人と知った人が混ざるとき、δ と各人の差を正しく出せるか
+  shape     半分の量の期間がある並び（AHBBHA）で、頭打ちの形を見分け、差を正しく出せるか
+  fitcheck  その人の記録への当てはまりの確認（checks.py）の誤報の割合と、合っていない記録を見つける割合
+  qhier     複数人の量子モデル（階層）：人数ごとに、作ったモデルを当てられるか、各人の θ を当てられるか
+
 結果は JSON で書き出す。CALIBRATION.md に転記するときはこの出力を使う。
 推定の回数は検証用（1000回）。本番（3000回）より少ない。
 """
@@ -417,7 +424,8 @@ def v03_fit(y, x_full, day, seed, pd=True, robust=True, conf=None):
     X, names = build_design(day, x_full[rows], conf)
     kw = {"robust": robust}
     if pd:
-        kw.update(treat_options=pdm.options(x_full)[:, rows], option_logprior=pdm.log_prior())
+        opts = pdm.options(x_full)[:, rows]
+        kw.update(treat_options=opts, option_logprior=np.where(pdm.identifiable(opts, day), pdm.log_prior(), -np.inf))
     f = fit_chains(y, X, day, names, n_draws=250, n_burn=300, seed=seed, **kw)
     return f, verdict(f)
 
@@ -450,7 +458,7 @@ def exp_pdlag(n):
                     acc[m]["p"].append(v.p_better)
                     acc[m]["cover"].append(v.effect_low <= effect <= v.effect_high)
                     if pdon:
-                        acc[m]["plag"].append(float(np.mean(f.lag_draws > 0)))
+                        acc[m]["plag"].append(float(1 - pdm.marginals(f.lag_draws)[0][0]))
             out[f"half{pd_half:g}_effect{effect:g}"] = {
                 m: {"mean_est": float(np.mean(a["est"])), "ge95": float(np.mean(np.array(a["p"]) >= 0.95)),
                     "cover": float(np.mean(a["cover"])), **({"p_lag": float(np.mean(a["plag"]))} if a["plag"] else {})}
@@ -531,6 +539,157 @@ def exp_quantum(n):
     return out
 
 
+def exp_cohort(n):
+    import tempfile
+    from n1engine.cohort import CohortStore
+    from n1engine.pipeline import analyze
+
+    K, mu, tau, true_half = 12, 0.6, 0.3, 2.0
+    err_own, err_pool, cov_own, cov_pool, lag_own, lag_pool = [], [], [], [], [], []
+    for s_ in range(n):
+        rng = np.random.default_rng(160_000 + s_)
+        store = CohortStore(pathlib.Path(tempfile.mkdtemp()) / "c.json")
+        theta = rng.normal(mu, tau, K)
+        for i in range(K):
+            seq = "ABBA" if (s_ + i) % 2 == 0 else "BAAB"
+            day, treat, y = gen_pd(seq, theta[i], true_half, 0.5, 1.0, 170_000 + 100 * s_ + i)
+            r = analyze({"day": day, "treat": treat, "outcome": y}, n_draws=250, null_sims=10, seed=i, secondary=False,
+                        cohort=store, client_id=f"c{i}")
+            if i < 4:
+                continue
+            ov, pv = r.own_v, r.pooled_v
+            err_own.append((ov.effect_mean - theta[i]) ** 2)
+            err_pool.append((pv.effect_mean - theta[i]) ** 2)
+            cov_own.append(ov.effect_low <= theta[i] <= ov.effect_high)
+            cov_pool.append(pv.effect_low <= theta[i] <= pv.effect_high)
+            lag_pool.append(1 - r.primary.pd_table[0][1])
+        # 比較：同じ人を、他の人なしで分析したときの遅れの見込み
+        day, treat, y = gen_pd("ABBA", theta[-1], true_half, 0.5, 1.0, 170_000 + 100 * s_ + K - 1)
+        r0 = analyze({"day": day, "treat": treat, "outcome": y}, n_draws=250, null_sims=10, seed=K - 1, secondary=False)
+        lag_own.append(1 - r0.primary.pd_table[0][1])
+    return {"n_sets": n, "people": K, "tau": tau, "true_lag_days": true_half,
+            "mse_own": float(np.mean(err_own)), "mse_pooled": float(np.mean(err_pool)),
+            "cover_own": float(np.mean(cov_own)), "cover_pooled": float(np.mean(cov_pool)),
+            "p_lag_alone": float(np.mean(lag_own)), "p_lag_with_cohort": float(np.mean(lag_pool))}
+
+
+def exp_expect(n):
+    from n1engine.research.population import pool
+
+    out = {}
+    for n_blind in (0, 4, 8):
+        bias_naive, bias_adj, cov_adj, d_est = [], [], [], []
+        for s_ in range(n):
+            rng = np.random.default_rng(180_000 + s_)
+            K = 16
+            theta = rng.normal(0.6, 0.3, K)
+            op = np.array([0] * n_blind + [1] * (K - n_blind), dtype=float)
+            se = rng.uniform(0.4, 0.8, K)
+            est = rng.normal(theta + 0.5 * op, se)
+            r = pool(est, se, seed=s_, n_draws=1500, open_label=op)
+            r0 = pool(est, se, seed=s_, n_draws=1500)
+            m = op == 1
+            bias_naive.append(np.mean(r0["individual_mean"][m] - theta[m]))
+            bias_adj.append(np.mean(r["individual_mean"][m] - theta[m]))
+            cov_adj.append(np.mean((r["individual_low"][m] <= theta[m]) & (theta[m] <= r["individual_high"][m])))
+            d_est.append(r["delta_mean"])
+        out[f"blinded{n_blind}"] = {"bias_without_delta": float(np.mean(bias_naive)), "bias_with_delta": float(np.mean(bias_adj)),
+                                    "cover_with_delta": float(np.mean(cov_adj)), "delta_mean": float(np.mean(d_est))}
+    out["n"] = n
+    out["true_delta"] = 0.5
+    return out
+
+
+def exp_shape(n):
+    from n1engine.design import DOSE_OF_PHASE
+
+    out = {}
+    for c_true in (None, 0.25):
+        acc = {m: {"est": [], "cover": [], "p_sat": []} for m in ("linear", "shape")}
+        for s_ in range(n):
+            rng = np.random.default_rng(190_000 + s_)
+            seq = "AHBBHA" if s_ % 2 == 0 else "BHAAHB"
+            amt = np.repeat([DOSE_OF_PHASE[c] for c in seq], 7)
+            day = np.arange(1, len(amt) + 1)
+            treat = (amt > 0).astype(int)
+            y = 5 + 1.5 * pdm.shape(amt, c_true) + ar1_noise(len(amt), 0.5, 1.0, rng)
+            for m in ("linear", "shape"):
+                rows = day - 1
+                opts = pdm.options(amt, halves=(0.0,), shapes=pdm.SHAPES if m == "shape" else (None,))
+                X, names = build_design(day, amt)
+                kw = dict(treat_options=opts[:, rows], option_logprior=np.log(np.array(pdm.SHAPE_PRIOR)) if m == "shape" else np.zeros(1), robust=True)
+                f = fit_chains(y, X, day, names, n_draws=250, n_burn=300, seed=s_, **kw)
+                v = verdict(f)
+                acc[m]["est"].append(v.effect_mean)
+                acc[m]["cover"].append(v.effect_low <= 1.5 <= v.effect_high)
+                if m == "shape":
+                    acc[m]["p_sat"].append(float(np.mean(f.lag_draws > 0)))
+        out["true_" + ("linear" if c_true is None else f"c{c_true:g}")] = {
+            m: {"mean_est": float(np.mean(a["est"])), "cover": float(np.mean(a["cover"])), **({"p_saturating": float(np.mean(a["p_sat"]))} if a["p_sat"] else {})}
+            for m, a in acc.items()}
+    out["n"] = n
+    out["true_effect"] = 1.5
+    return out
+
+
+def exp_fitcheck(n):
+    from n1engine.checks import check
+
+    out = {}
+    for seq0 in ("ABBA", "ABABBABA"):
+        for kind in ("ar1", "ar2", "shift"):
+            flagged, cover = [], []
+            for s_ in range(n):
+                rng = np.random.default_rng(200_000 + s_)
+                seq = seq0 if s_ % 2 == 0 else seq0.translate(str.maketrans("AB", "BA"))
+                treat = np.repeat([1 if c == "B" else 0 for c in seq], 7)
+                m = len(treat)
+                day = np.arange(1, m + 1)
+                if kind == "ar1":
+                    u = ar1_noise(m, 0.5, 1.0, rng)
+                elif kind == "ar2":  # 2日前も強く引きずる記録（モデルの想定外）
+                    e = rng.normal(0, 1, m)
+                    u = np.zeros(m)
+                    for t_ in range(m):
+                        u[t_] = e[t_] + (0.1 * u[t_ - 1] if t_ >= 1 else 0) + (0.6 * u[t_ - 2] if t_ >= 2 else 0)
+                else:  # 期間の途中から途中まで、体調の水準が一段上がる記録（4日目〜10日目、期間の境目をまたぐ）
+                    u = ar1_noise(m, 0.3, 0.7, rng) + np.where((day >= 4) & (day <= 10), 2.5, 0.0)
+                y = 5 + 0.5 * treat + u
+                X, names = build_design(day, treat)
+                f = fit_chains(y, X, day, names, n_draws=250, n_burn=300, seed=s_, robust=True)
+                r = check(f, y, X, day, seed=s_)
+                flagged.append(not r["ok"])
+                cover.append(r["coverage90"])
+            out[f"{len(seq0) * 7}d_{kind}"] = {"flagged": float(np.mean(flagged)), "mean_coverage90": float(np.mean(cover))}
+    out["n"] = n
+    return out
+
+
+def exp_qhier(n):
+    from n1engine.research.quantum import compare_hier, simulate_people_classical, simulate_people_quantum
+
+    out = {}
+    for k in (5, 10, 20):
+        hit_q = hit_c = 0
+        rmse, cov = [], []
+        for s_ in range(n):
+            rng = np.random.default_rng(210_000 + s_)
+            tabs, th = simulate_people_quantum(k, 14, 0.9, 0.7, 0.2, rng)
+            r = compare_hier(tabs)
+            hit_q += r["better"] == "quantum"
+            est = np.array([p_["theta"] for p_ in r["quantum"]["people"]])
+            lo = np.array([p_["theta_low"] for p_ in r["quantum"]["people"]])
+            hi = np.array([p_["theta_high"] for p_ in r["quantum"]["people"]])
+            rmse.append(np.sqrt(np.mean((est - th) ** 2)))
+            cov.append(np.mean((lo <= th) & (th <= hi)))
+            hit_c += compare_hier(simulate_people_classical(k, 14, np.array([0.35, 0.15, 0.2, 0.3]), 20, rng))["better"] == "classical"
+        out[f"people{k}"] = {"quantum_recovered": hit_q / n, "classical_recovered": hit_c / n,
+                             "theta_rmse": float(np.mean(rmse)), "theta_cover90": float(np.mean(cov))}
+    out["n"] = n
+    out["answers_per_order_per_person"] = 14
+    return out
+
+
 EXPERIMENTS = {
     "example": (exp_example, 1),
     "nullalt": (exp_nullalt, 200),
@@ -548,6 +707,11 @@ EXPERIMENTS = {
     "robust": (exp_robust, 60),
     "pooling": (exp_pooling, 200),
     "quantum": (exp_quantum, 200),
+    "cohort": (exp_cohort, 15),
+    "expect": (exp_expect, 200),
+    "shape": (exp_shape, 60),
+    "fitcheck": (exp_fitcheck, 100),
+    "qhier": (exp_qhier, 50),
 }
 
 
