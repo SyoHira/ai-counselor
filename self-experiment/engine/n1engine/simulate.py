@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .design import make_schedule
+from .design import make_factorial_schedule, make_schedule
 from .domain import pd as pdm
 from .domain.pk import PK, Window, daily_exposure
 from .model import build_design, fit, gls_estimate, verdict
@@ -55,6 +55,35 @@ def fake_experiment(
     trend = drift * (day - day.mean()) / n
     y = base + effect * exposure + trend + mood_weight * (mood - 5) + ar1_noise(n, rho, sigma, rng)
     return day, treat, np.clip(y, 0, 10), {"mood": mood, "exposure": exposure}
+
+
+def fake_factorial(
+    effects: tuple[float, float],
+    interaction: float = 0.0,
+    rho: float = 0.5,
+    sigma: float = 1.0,
+    base: float = 5.0,
+    drift: float = 0.0,
+    seed: int | None = None,
+    pks: tuple[PK | None, PK | None] = (None, None),
+    dose_hours: tuple[float, float] = (8.0, 8.0),
+    window: Window | None = None,
+):
+    """2つの成分を掛け合わせた偽の記録（答え：Aだけ・Bだけ・上乗せ）。
+
+    差 = A単独 × 体内量A + B単独 × 体内量B + 上乗せ × 体内量A × 体内量B。
+    """
+    rng = np.random.default_rng(seed)
+    days = make_factorial_schedule(seed=seed)
+    n = len(days)
+    day = np.array([d.day for d in days])
+    ex = []
+    for i in range(2):
+        t = np.array([d.levels[i] for d in days])
+        ex.append(t.astype(float) if pks[i] is None else daily_exposure(day, t, pks[i], dose_hours[i], window or Window(23, 31, "")))
+    trend = drift * (day - day.mean()) / n
+    y = base + effects[0] * ex[0] + effects[1] * ex[1] + interaction * ex[0] * ex[1] + trend + ar1_noise(n, rho, sigma, rng)
+    return day, ex, np.clip(y, 0, 10)
 
 
 MIN_BASELINE_DAYS = 7
@@ -128,6 +157,7 @@ def null_check(
     direction: int = 1,
     n_sims: int = 2000,
     seed: int = 0,
+    column: str = "treatment",
 ) -> dict:
     """実験の後に：差がゼロだったとしたら、この程度の差は何回に1回出るか。
 
@@ -139,7 +169,7 @@ def null_check(
     推定は直線的なので、基準値・時間の流れ・外部要因の大きさは結果に影響しない。
     """
     rng = np.random.default_rng(seed)
-    j = names.index("treatment")
+    j = names.index(column)
     observed = direction * gls_estimate(y, X, day, rho, j)
     day = np.asarray(day, dtype=int)
     y = np.asarray(y, dtype=float)

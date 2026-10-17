@@ -33,6 +33,42 @@ DOSE_SEQUENCES = ("AHBBHA", "BHAAHB")
 DOSE_OF_PHASE = {"A": 0.0, "H": 0.5, "B": 1.0}
 
 
+# 2つの成分を掛け合わせる56日（7日×8期間、v0.5.0）。0=どちらも飲まない / 1=Aだけ / 2=Bだけ / 3=両方。
+# 4条件の並びは Williams の方陣の行（どの条件も、他のどの条件の直後に1回ずつ来る）で、
+# 後半は前半を逆順にする。逆順にすると4条件の平均位置がそろい（すべて3.5）、時間の流れが偏らない。
+# 前半と後半で各条件が2回ずつ、持ち越しも偏らない。
+FACTORIAL_SEQUENCES = ((0, 1, 3, 2, 2, 3, 1, 0), (1, 2, 0, 3, 3, 0, 2, 1))
+
+
+@dataclass(frozen=True)
+class FactorialDay:
+    day: int
+    levels: tuple[int, int]  # (Aを飲む=1, Bを飲む=1)
+    rating_order: tuple[str, ...]
+    pair_order: str
+
+
+def make_factorial_schedule(block_len: int = 7, seed: int | None = None, swap: bool | None = None) -> list[FactorialDay]:
+    """2つの成分 A・B を単独でも一緒でも試す56日の日程。swap で A と B の役を入れ替える（乱数で選ぶ）。"""
+    if block_len % 7:
+        raise ValueError("期間の長さは7日の倍数にする（曜日をそろえるため）")
+    rng = random.Random(seed)
+    seq = rng.choice(FACTORIAL_SEQUENCES)
+    if swap is None:
+        swap = rng.random() < 0.5
+    days, n = [], 0
+    for cond in seq:
+        a, b = cond & 1, (cond >> 1) & 1
+        if swap:
+            a, b = b, a
+        for _ in range(block_len):
+            n += 1
+            order = list(RATING_QUESTIONS)
+            rng.shuffle(order)
+            days.append(FactorialDay(n, (a, b), tuple(order), rng.choice(("AB", "BA"))))
+    return days
+
+
 @dataclass(frozen=True)
 class Day:
     day: int  # 1始まり

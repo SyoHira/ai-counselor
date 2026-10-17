@@ -8,6 +8,10 @@
 
   v0.3.0：曝露量に「記録に現れるまでの遅れ」（domain/pd.py）をかけ、その長さも推定する。
   揺れは t 分布にして、外れた日の重みを下げる。
+
+  v0.5.0：複数の成分・要因を掛け合わせる。追加の要因（Factor）ごとに、曝露量・遅れ・形を持たせ、
+  すべての組について「同時に取ったときの上乗せ」（曝露量どうしの積）を足して推定する。
+  結果は、単独（他を取らないとき）・同時・上乗せの3つで出す。
 """
 
 from __future__ import annotations
@@ -22,10 +26,20 @@ from .domain.substances import Substance
 from .domain.variables import VARIABLES, confounders_in, derive, responses_in, transformed
 from . import checks
 from . import cohort as coh
-from .model import Fit, Verdict, build_design, fit_chains, verdict, verdict_draws
+from .model import Fit, Verdict, build_design, fit_chains, interaction_parts, is_term, verdict, verdict_draws
 from .simulate import null_check
 
 RATING_UNIT = "0〜10"
+
+
+@dataclass
+class Factor:
+    """掛け合わせる追加の成分・要因。記録には 'phase_<key>'（A/B）の列を使う。"""
+
+    key: str
+    label: str
+    substance: Substance | None = None
+    dose_hour: float = 8.0
 
 
 @dataclass
@@ -51,6 +65,7 @@ class OutcomeResult:
     excluded_lags: list | None = None  # その人の並びでは見分けられないため外した遅れの候補
     lag_lik: list | None = None
     shape_lik: list | None = None
+    multi: dict | None = None  # 複数の要因を掛け合わせたときの、要因ごとの結果・上乗せ・同時の結果
 
 
 @dataclass
@@ -74,6 +89,8 @@ class Analysis:
     blinded: bool = False
     priors_from_others: int = 0
     quantum: dict | None = None  # 研究層：質問の順番とその人の答え方
+    extras: list = field(default_factory=list)  # 掛け合わせた追加の要因（Factor）
+    primary_label: str = ""
 
 
 def _scale(y: np.ndarray, treat: np.ndarray, unit: str) -> tuple[np.ndarray, float, float]:
@@ -91,15 +108,20 @@ def _scale(y: np.ndarray, treat: np.ndarray, unit: str) -> tuple[np.ndarray, flo
     return 5 + (y - center) / sd, sd, center
 
 
-def full_exposure(d, substance, dose_hour, w) -> np.ndarray:
-    """1日目から最終日まで、記録の無い日も含めた毎日の体内量（定常状態=1.0）。"""
+def full_exposure(d, substance, dose_hour, w, key: str | None = None) -> np.ndarray:
+    """1日目から最終日まで、記録の無い日も含めた毎日の体内量（定常状態=1.0）。
+
+    key を与えると、追加の要因の列（treat_<key>・dose_hour_<key>・taken_<key>・amount_<key>）を使う。
+    """
+    sfx = f"_{key}" if key else ""
     day = np.asarray(d["day"], dtype=int)
-    full, t = fill_phases(day, d["treat"])
-    def spread(key):
-        if key not in d:
+    full, t = fill_phases(day, d["treat" + sfx])
+    def spread(name):
+        name = name + sfx
+        if name not in d:
             return None
         a = np.full(len(full), np.nan)
-        a[day - 1] = np.asarray(d[key], dtype=float)
+        a[day - 1] = np.asarray(d[name], dtype=float)
         return a
     dh, tk, am = spread("dose_hour"), spread("taken"), spread("amount")
     if substance is not None and substance.pk is not None:
@@ -112,56 +134,121 @@ def full_exposure(d, substance, dose_hour, w) -> np.ndarray:
     return x
 
 
-def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, dose_hour, bedtime, waketime, seed, n_draws, pd=True, robust=True, lag_probs=None, shape_probs=None):
+def _refresh_interactions(X, names):
+    for i, n_ in enumerate(names):
+        if n_.startswith("x:"):
+            ca, cb = interaction_parts(n_)
+            X[:, i] = X[:, names.index(ca)] * X[:, names.index(cb)]
+
+
+def _factor_tables(f, i, opts, excluded, lag_probs, shape_probs):
+    """要因 i の、遅れ・形の事後確率と、次の人のための当てはまり（尤度）。"""
+    lag_m, shape_m = pdm.marginals(f.option_draws[:, i])
+    prior_lag = np.asarray(lag_probs if lag_probs is not None else pdm.lag_probs_default())
+    prior_shape = np.asarray(shape_probs if shape_probs is not None else pdm.SHAPE_PRIOR)
+    keep_lag = np.array([h not in excluded for h in pdm.PD_HALF_DAYS])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ll = np.where(keep_lag, lag_m / np.where(prior_lag > 0, prior_lag, 1), 0.0)
+        lag_lik = ll / ll.sum() if ll.sum() > 0 else None
+        sl = shape_m / prior_shape
+        shape_lik = sl / sl.sum()
+    mode = int(np.bincount(f.option_draws[:, i], minlength=opts.shape[0]).argmax())
+    return {
+        "lag_m": lag_m, "shape_m": shape_m, "lag_lik": lag_lik, "shape_lik": shape_lik, "mode": mode,
+        "pd_table": [(h, float(pp)) for h, pp in zip(pdm.PD_HALF_DAYS, lag_m)],
+        "shape_table": [(lab, float(pp)) for lab, pp in zip(pdm.SHAPE_LABELS, shape_m)],
+        "pd_mode": pdm.PD_HALF_DAYS[mode // len(pdm.SHAPES)],
+    }
+
+
+def _vif(X, names):
+    """飲んだ影響の各列が、ほかの列（時間の流れ・外部要因・ほかの要因）でどれだけ言い表せるか。5を超えると見分けにくい。"""
+    out = {}
+    for i, n_ in enumerate(names):
+        if not is_term(n_):
+            continue
+        rest = np.delete(X, i, axis=1)
+        resid = X[:, i] - rest @ np.linalg.lstsq(rest, X[:, i], rcond=None)[0]
+        ss = np.sum((X[:, i] - X[:, i].mean()) ** 2)
+        r2 = 1 - np.sum(resid**2) / ss if ss > 0 else 0.0
+        out[n_] = float(1 / max(1 - r2, 1e-6))
+    return out
+
+
+def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, dose_hour, bedtime, waketime, seed, n_draws, pd=True, robust=True, lag_probs=None, shape_probs=None, extras=(), primary_label="成分A"):
     var = VARIABLES.get(key)
     unit = var.unit if var else RATING_UNIT
     timing = (var.timing if var and var.timing else None) or timing
     w = window_for(timing, bedtime, waketime)
-    x_full = full_exposure(d, substance, dose_hour, w)
+    specs = [(None, substance, dose_hour)] + [(e.key, e.substance, e.dose_hour) for e in extras]
+    x_fulls = [full_exposure(d, sub, dh, w, key=k) for k, sub, dh in specs]
     rows = np.asarray(d["day"], dtype=int) - 1
-    opts = pdm.options(x_full)[:, rows] if pd else None
-    exposure = x_full[rows]
+    opts_l = [pdm.options(x)[:, rows] if pd else None for x in x_fulls]
+    exposures = [x[rows] for x in x_fulls]
     y_raw = transformed(key, d[key])
-    y, sc, _ = _scale(y_raw, d["treat"], unit)
-    X, names = build_design(d["day"], exposure, X_conf)
+    any_on = np.zeros(len(d["day"]), dtype=int)
+    for k, _, _ in specs:
+        any_on = any_on | np.asarray(d["treat" + (f"_{k}" if k else "")], dtype=int)
+    y, sc, _ = _scale(y_raw, any_on, unit)
+    X, names = build_design(d["day"], exposures[0], X_conf, extras={e.key: exposures[i + 1] for i, e in enumerate(extras)}, interactions=bool(extras))
+    fnames = ["treatment"] + [f"factor:{e.key}" for e in extras]
+    js = [names.index(n_) for n_ in fnames]
+    vif = _vif(X, names) if extras else None  # 並びそのものの見分けやすさ（遅れ・形を選ぶ前の曝露量で測る）
     kw = {"robust": robust}
-    excluded_lags = []
+    excluded_l = [[] for _ in fnames]
     if pd:
-        lp = pdm.log_prior(lag_probs=lag_probs, shape_probs=shape_probs)
-        keep = pdm.identifiable(opts, d["day"])
-        lp = np.where(keep, lp, -np.inf)
         ns = len(pdm.SHAPES)
-        excluded_lags = [h for i, h in enumerate(pdm.PD_HALF_DAYS) if not keep[i * ns]]
-        kw.update(treat_options=opts, option_logprior=lp)
+        specs_f = []
+        for i, (o, n_) in enumerate(zip(opts_l, fnames)):
+            lp = pdm.log_prior(lag_probs=lag_probs if i == 0 else None, shape_probs=shape_probs if i == 0 else None)
+            keep = pdm.identifiable(o, d["day"])
+            lp = np.where(keep, lp, -np.inf)
+            excluded_l[i] = [h for q, h in enumerate(pdm.PD_HALF_DAYS) if not keep[q * ns]]
+            specs_f.append({"name": n_, "options": o, "logprior": lp})
+        kw["factors"] = specs_f
     f = fit_chains(y, X, d["day"], names, n_draws=n_draws, seed=seed, **kw)
-    j = names.index("treatment")
+    j = js[0]
+    tabs = [None] * len(fnames)
     if pd:
-        mode0 = int(np.bincount(f.lag_draws, minlength=opts.shape[0]).argmax())
-        X[:, j] = opts[mode0]
+        for i in range(len(fnames)):
+            tabs[i] = _factor_tables(f, i, opts_l[i], excluded_l[i], lag_probs if i == 0 else None, shape_probs if i == 0 else None)
+            X[:, js[i]] = opts_l[i][tabs[i]["mode"]]  # 偶然との比較は、最もありそうな遅れ・形の列で行う
+        _refresh_interactions(X, names)
     fitcheck = checks.check(f, y, X, d["day"], seed=seed)  # 元の尺度に戻す前に、その人の記録で当てはまりを確かめる
-    f.beta_draws[:, j] *= sc
+    for i_, n_ in enumerate(names):
+        if is_term(n_):
+            f.beta_draws[:, i_] *= sc
     f.sigma_draws *= sc
     v = verdict(f, direction=direction if direction else 1, mid=mid if mid is not None else 0.0)
-    pd_table = pd_mode = shape_table = None
-    lag_m = shape_m = lag_lik = shape_lik = None
-    if pd:
-        lag_m, shape_m = pdm.marginals(f.lag_draws)
-        prior_lag = np.asarray(lag_probs if lag_probs is not None else pdm.lag_probs_default())
-        prior_shape = np.asarray(shape_probs if shape_probs is not None else pdm.SHAPE_PRIOR)
-        keep_lag = np.array([h not in excluded_lags for h in pdm.PD_HALF_DAYS])
-        with np.errstate(divide="ignore", invalid="ignore"):
-            ll = np.where(keep_lag, lag_m / np.where(prior_lag > 0, prior_lag, 1), 0.0)
-            lag_lik = ll / ll.sum() if ll.sum() > 0 else None
-            sl = shape_m / prior_shape
-            shape_lik = sl / sl.sum()
-        pd_table = [(h, float(pp)) for h, pp in zip(pdm.PD_HALF_DAYS, lag_m)]
-        shape_table = [(lab, float(pp)) for lab, pp in zip(pdm.SHAPE_LABELS, shape_m)]
-        mode = int(np.bincount(f.lag_draws, minlength=opts.shape[0]).argmax())
-        pd_mode = pdm.PD_HALF_DAYS[mode // len(pdm.SHAPES)]
-        X[:, j] = opts[mode]  # 偶然との比較は、最もありそうな遅れ・形の列で行う
+    t0 = tabs[0] or {}
     outliers = None
     if robust and f.weight_mean is not None:
         outliers = [int(dd) for dd, wv in zip(f.weight_day, f.weight_mean) if wv < 0.5]
+    multi = None
+    if extras:
+        dr_ = direction if direction else 1
+        mid_ = mid if mid is not None else 0.0
+        labels = [primary_label] + [e.label for e in extras]
+        facs = []
+        for i, n_ in enumerate(fnames):
+            t = tabs[i] or {}
+            facs.append({"name": n_, "label": labels[i], "v": verdict_draws(f.draws(n_), dr_, mid_, float(f.rho_draws.mean())),
+                         "pd_table": t.get("pd_table"), "shape_table": t.get("shape_table"), "pd_mode": t.get("pd_mode"),
+                         "excluded_lags": excluded_l[i], "lag_probs": None if not t else t["lag_m"].tolist(),
+                         "shape_probs": None if not t else t["shape_m"].tolist()})
+        ints = []
+        total = sum(f.draws(n_) for n_ in fnames)
+        for n_ in names:
+            if n_.startswith("x:"):
+                ca, cb = interaction_parts(n_)
+                la, lb = labels[fnames.index(ca)], labels[fnames.index(cb)]
+                ints.append({"name": n_, "label": f"{la}と{lb}の組み合わせの上乗せ", "pair": (la, lb),
+                             "v": verdict_draws(f.draws(n_), dr_, mid_, float(f.rho_draws.mean()))})
+                total = total + f.draws(n_)
+        multi = {"factors": facs, "interactions": ints,
+                 "both": verdict_draws(total, dr_, mid_, float(f.rho_draws.mean())),
+                 "both_label": "・".join(labels) + "を一緒に",
+                 "vif": vif}
     res = OutcomeResult(
         key=key,
         label=var.label if var else key,
@@ -174,16 +261,17 @@ def _fit_outcome(d, key, timing, direction, mid, X_conf, names_conf, substance, 
         fit=f,
         scale=sc,
         n_days=int(np.sum(~np.isnan(y_raw))),
-        pd_table=pd_table,
-        pd_mode=pd_mode,
+        pd_table=t0.get("pd_table"),
+        pd_mode=t0.get("pd_mode"),
         outlier_days=outliers,
-        shape_table=shape_table,
-        lag_probs=None if lag_m is None else lag_m.tolist(),
-        shape_probs=None if shape_m is None else shape_m.tolist(),
+        shape_table=t0.get("shape_table"),
+        lag_probs=None if not t0 else t0["lag_m"].tolist(),
+        shape_probs=None if not t0 else t0["shape_m"].tolist(),
         fitcheck=fitcheck,
-        excluded_lags=excluded_lags,
-        lag_lik=None if lag_lik is None else lag_lik.tolist(),
-        shape_lik=None if shape_lik is None else shape_lik.tolist(),
+        excluded_lags=excluded_l[0],
+        lag_lik=None if not t0 or t0["lag_lik"] is None else t0["lag_lik"].tolist(),
+        shape_lik=None if not t0 else t0["shape_lik"].tolist(),
+        multi=multi,
     )
     return res, (y, X, names)
 
@@ -210,11 +298,19 @@ def analyze(
     client_id: str | None = None,
     blinded: bool = False,
     consent: bool = True,
+    extras: list[Factor] | tuple = (),
+    primary_label: str | None = None,
 ) -> Analysis:
     d = derive(d)
+    extras = list(extras)
+    for e in extras:
+        if "treat_" + e.key not in d:
+            raise ValueError(f"追加の要因 {e.key} の列 phase_{e.key} が記録にありません")
+    primary_label = primary_label or (substance.name if substance is not None else "成分A")
     if primary not in d:
         raise ValueError(f"主要項目 {primary} が記録にありません")
-    exclude = ("coffee",) if substance is not None and substance.key == "caffeine" else ()
+    has_caffeine = any(x is not None and x.key == "caffeine" for x in [substance] + [e.substance for e in extras])
+    exclude = ("coffee",) if has_caffeine else ()
     conf = confounders_in(d, cycle_length, exclude=exclude)
     missing = {k: int(np.sum(np.isnan(np.asarray(v, dtype=float)))) for k, v in conf.items()}
 
@@ -223,22 +319,29 @@ def analyze(
         mid = 1.0
     pdir = direction if direction is not None else (pvar.better if pvar else 1)
     sub_key = substance.key if substance is not None else "none"
+    if extras:  # 同じ組み合わせで試した人だけを土台にする（単独の差と、他を取っているときの差は別の量）
+        sub_key = sub_key + "×" + "×".join(sorted(e.substance.key if e.substance is not None else e.key for e in extras))
     others = cohort.others(sub_key, primary, client_id or "") if cohort is not None else []
     lag_p = shape_p = None
     if others:
         lag_p, shape_p = coh.priors_from(others)
-    prim, (y, X, names) = _fit_outcome(d, primary, timing, pdir, mid, conf, None, substance, dose_hour, bedtime, waketime, seed, n_draws, pd, robust, lag_p, shape_p)
+    prim, (y, X, names) = _fit_outcome(d, primary, timing, pdir, mid, conf, None, substance, dose_hour, bedtime, waketime, seed, n_draws, pd, robust, lag_p, shape_p, extras, primary_label)
 
     sig = float(prim.fit.sigma_draws.mean()) / prim.scale
     null = null_check(y, X, d["day"], names, prim.v.rho_mean, sig, direction=pdir or 1, n_sims=null_sims, seed=seed)
     null["observed_diff"] *= prim.scale
+    if prim.multi is not None:  # 追加の要因・上乗せも、同じ方法で偶然と比べる
+        for t in prim.multi["factors"][1:] + prim.multi["interactions"]:
+            t["null"] = null_check(y, X, d["day"], names, prim.v.rho_mean, sig, direction=pdir or 1, n_sims=null_sims, seed=seed, column=t["name"])
+            t["null"]["observed_diff"] *= prim.scale
+        prim.multi["factors"][0]["null"] = null
 
     secs = []
     if secondary:
         for k in responses_in(d, primary):
             if np.sum(~np.isnan(np.asarray(d[k], dtype=float))) < 10:
                 continue
-            r, _ = _fit_outcome(d, k, timing, VARIABLES[k].better, 0.0, conf, None, substance, dose_hour, bedtime, waketime, seed + 1, n_draws, pd, robust)
+            r, _ = _fit_outcome(d, k, timing, VARIABLES[k].better, 0.0, conf, None, substance, dose_hour, bedtime, waketime, seed + 1, n_draws, pd, robust, None, None, extras, primary_label)
             secs.append(r)
 
     suit = residual = washout = None
@@ -247,6 +350,14 @@ def analyze(
         if substance.pk is not None:
             residual = residual_share(substance.pk, dose_hour, prim.window)
             washout = washout_days(substance.pk)
+    if prim.multi is not None:  # 追加の要因それぞれの、体内での動き
+        for e, t in zip(extras, prim.multi["factors"][1:]):
+            t["substance"], t["dose_hour"] = e.substance, e.dose_hour
+            if e.substance is not None:
+                t["suit"] = suitability(e.substance.pk, e.dose_hour, prim.window, steady_days=e.substance.steady_days)
+                if e.substance.pk is not None:
+                    t["residual"] = residual_share(e.substance.pk, e.dose_hour, prim.window)
+                    t["washout"] = washout_days(e.substance.pk)
 
     overlap = None
     if "cycle_sin" in conf:
@@ -295,4 +406,6 @@ def analyze(
         residual=residual,
         washout=washout,
         cycle_overlap=overlap,
+        extras=extras,
+        primary_label=primary_label,
     )

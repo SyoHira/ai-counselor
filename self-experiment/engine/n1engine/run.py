@@ -4,6 +4,10 @@
     python -m n1engine.run analyze 記録.csv --item "カフェイン（15時）" \\
         --outcome sol --substance caffeine --dose-hour 15
 
+  複数の成分を掛け合わせる（例：カフェイン15時 と テアニン15時 の56日）：
+    python -m n1engine.run analyze 記録.csv --item "カフェイン×テアニン" --outcome sol \
+        --substance caffeine --dose-hour 15 --extra theanine:theanine:15
+
   実験前の日数の見積もり（普段通りの記録が7日以上あるとき）：
     python -m n1engine.run plan 普段の記録.csv --substance caffeine --dose-hour 15 --timing night
 
@@ -13,6 +17,8 @@
 CSVの列（項目の意味・役割は n1engine/domain/variables.py）
   day        1始まりの日番号（抜けた日は行ごと無くてよい）
   phase      A=普段通り / B=飲む
+  phase_<名前>  掛け合わせる追加の成分・要因があるとき、その分の A/B（--extra で名前を指定）。
+             dose_hour_<名前>・taken_<名前>・amount_<名前> も同じ名前の接尾辞で読む
   主要項目    実験前に決めた1つ（--outcome で指定。既定は outcome）
   体の反応    mood, stress, sleep, sol, waso, tst, tib, se, rhr, rmssd（あれば参考として出す）
   外部要因    alcohol, coffee, offday, sick, cycle_day（あれば補正に使う）
@@ -43,6 +49,10 @@ from .simulate import plan_length
 TEXT_COLUMNS = ("phase", "pair_order", "rating_order", "date")
 
 
+def _is_phase(name: str) -> bool:
+    return name == "phase" or name.startswith("phase_")
+
+
 def load(path: str) -> dict[str, np.ndarray]:
     with open(path, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
@@ -50,7 +60,7 @@ def load(path: str) -> dict[str, np.ndarray]:
         raise SystemExit("CSVが空です")
     data: dict[str, np.ndarray] = {}
     for name in rows[0]:
-        if name in TEXT_COLUMNS:
+        if name in TEXT_COLUMNS or name.startswith("phase_"):
             if name in ("pair_order", "rating_order"):
                 data[name] = np.array([(r.get(name) or "").strip() for r in rows], dtype=object)
             continue
@@ -62,12 +72,31 @@ def load(path: str) -> dict[str, np.ndarray]:
         if not np.all(np.isnan(arr)):
             data[name] = arr
     data["day"] = data["day"].astype(int)
-    if "phase" in rows[0]:
-        ph = [r["phase"].strip().upper() for r in rows]
-        data["treat"] = np.array([1 if p_ in ("B", "H") else 0 for p_ in ph])
-        if "H" in ph and "amount" not in data:
-            data["amount"] = np.array([0.5 if p_ == "H" else 1.0 for p_ in ph])
+    for col in rows[0]:
+        if not _is_phase(col):
+            continue
+        sfx = col[len("phase"):]  # "" または "_<名前>"
+        ph = [r[col].strip().upper() for r in rows]
+        data["treat" + sfx] = np.array([1 if p_ in ("B", "H") else 0 for p_ in ph])
+        if "H" in ph and "amount" + sfx not in data:
+            data["amount" + sfx] = np.array([0.5 if p_ == "H" else 1.0 for p_ in ph])
     return data
+
+
+def parse_extra(spec: str):
+    """--extra の値 '名前[:成分[:時刻]]' から、追加の要因を作る。成分は一覧の名前（なければ名前自体を成分名として探す）。"""
+    from .pipeline import Factor
+
+    parts = spec.split(":")
+    key = parts[0]
+    sub_key = parts[1] if len(parts) > 1 and parts[1] else None
+    hour = float(parts[2]) if len(parts) > 2 and parts[2] else 8.0
+    sub = None
+    if sub_key:
+        if sub_key not in SUBSTANCES:
+            raise SystemExit(f"成分の一覧にありません: {sub_key}（{', '.join(SUBSTANCES)}）")
+        sub = SUBSTANCES[sub_key]
+    return Factor(key=key, label=sub.name if sub else key, substance=sub, dose_hour=hour)
 
 
 def _substance(a):
@@ -103,6 +132,8 @@ def cmd_analyze(a: argparse.Namespace) -> None:
         client_id=a.client_id,
         blinded=a.blinded,
         consent=not a.no_consent,
+        extras=[parse_extra(x) for x in a.extra],
+        primary_label=a.name,
     )
     if store is not None:
         store.save()
@@ -216,6 +247,9 @@ def main(argv: list[str] | None = None) -> None:
     an.add_argument("--client-id", help="お客さんの番号（cohort の中で人を区別する）")
     an.add_argument("--no-consent", action="store_true", help="この人の要約を cohort に保存しない")
     an.add_argument("--no-pd", action="store_true", help="記録に現れるまでの遅れを推定しない（遅れが無いと分かっている場合。検出力が上がる）")
+    an.add_argument("--extra", action="append", default=[], metavar="名前[:成分[:時刻]]",
+                    help="掛け合わせる追加の成分・要因（記録の列 phase_<名前>）。複数回指定できる")
+    an.add_argument("--name", help="最初の成分・要因の呼び名（既定は成分名）")
     an.add_argument("--out")
     an.add_argument("--seed", type=int, default=0)
     _common(an)

@@ -12,7 +12,8 @@ python -m n1engine.run analyze examples/example.csv \
   --item "カフェイン（15時）" --outcome sol --substance caffeine --dose-hour 15 --out report.md
 python -m n1engine.run substances        # 成分の一覧と、7日ずつの入れ替えに向いているか
 python -m n1engine.run plan 普段の記録.csv --substance caffeine --dose-hour 15 --outcome sol
-python -m pytest -q tests                # 壊れていないかの確認（50秒前後）
+python -m pytest -q tests                # 壊れていないかの確認（2分前後）
+python scripts/verify_matrix.py --all --n 30 --jobs 4   # 複数の成分の掛け合わせの検証（10分前後）
 python scripts/calibrate.py              # 本格的な検証（10分前後）
 ```
 
@@ -127,6 +128,30 @@ ke = ln2 ÷ 半減期    ka = 最高濃度までの時間 Tmax から逆算
 ### 2.10 量と反応の形・半分の量の並び（v0.4.0）
 
 量が増えると頭打ちになる形（Emax）を、遅れと一緒に候補から推定する。半分の量の期間を入れる42日の並び（AHBBHA／BHAAHB、前後対称で時間の流れが均等にかかる）を使うと形が見える。
+
+### 2.11 複数の成分・要因の掛け合わせ（v0.5.0）
+
+2つ以上の成分（または要因）を、単独でも一緒でも試して、条件ごとの差と「一緒に取ったときの上乗せ」を出す。
+
+```
+その日の記録 = 基準値
+             + A単独の差 × 体内量A(遅れ・形つき)
+             + B単独の差 × 体内量B(遅れ・形つき)
+             + 上乗せ     × 体内量A × 体内量B
+             + 時間の流れ + 外部要因 + 揺れ
+```
+
+- 並び：2成分は56日の `make_factorial_schedule`（0=なし／1=Aだけ／2=Bだけ／3=両方を7日ずつ。Williams の方陣の行を前半に置き、後半は逆順にする。どの条件も2期間・14日で、平均位置がそろう＝時間の流れが偏らない）。A と B の曝露量は無相関
+- 記録：`phase`（最初の成分）に加えて、追加の成分ごとに `phase_<名前>` 列（`dose_hour_<名前>`・`taken_<名前>`・`amount_<名前>` も同じ接尾辞）
+- 実行：`python -m n1engine.run analyze 記録.csv --item "カフェイン×テアニン" --outcome sol --substance caffeine --dose-hour 15 --extra theanine:theanine:15`（`--extra 名前[:成分[:時刻]]` は複数回指定できる）
+- 成分ごとに、体内量・遅れ・形を別々に持つ（`pipeline.Factor`）。遅れ・形は要因ごとにギブスサンプリングの1段で選び直し、上乗せの列はそのとき選ばれた列どうしの積として毎回作り直す（`model.fit(factors=…)`）
+- 結果は「Aだけ」「Bだけ」「一緒に」「上乗せ」の4行。「一緒に」は単独の差の合計に上乗せを足した分布。各行を偶然とも比べる（`null_check(column=…)`）
+- 上乗せの事前分布は、単独の差と同じ幅（±2点程度）。±1点では上乗せを小さく見積もりすぎ、90%の幅の正しさが42〜55%に落ちた（CALIBRATION.md v0.5.0）
+- 他の人の傾向を土台にするのは最初の成分の単独の差だけ。同じ組み合わせで試した人だけを土台にする（cohort の成分名は `caffeine×theanine`）
+- 並びが重なって見分けにくい項目は、VIF（5超）でレポートに出す
+- 3つ以上：分析は動く（`--extra` を2回。すべての2つの組の上乗せを足す。3つの同時の上乗せは入れない）が、検証したのは2成分まで。並びの作成（`make_factorial_schedule`）も2成分だけで、3つ以上は56日で8条件を1回ずつにすると並びの重なり（VIF）が5を超えるため、使うなら期間を延ばす
+
+検証は `scripts/verify_matrix.py`（成分の組 × 本当の差の組み合わせ）と、GitHub Actions（`.github/workflows/self-experiment.yml`）で毎回回す。
 
 ### 2.7 外れた日に強い揺れ（v0.3.0）
 

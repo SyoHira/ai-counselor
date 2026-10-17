@@ -40,12 +40,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+from scipy.special import gammaln
 
 # 事前の前提（事前分布）。実験の前に決めて固定し、レポートに書く。途中で変えない。
 DEFAULT_PRIORS = {
     # 差（飲み続けて安定したときの差）：「たぶん差はない、あっても±2点程度」という控えめな前提。
     # 0〜10 の自己評価を想定した値。分や拍/分の項目では、その項目のばらつきに合わせて広げる（run.py）
     "treatment_sd": 2.0,
+    # 組み合わせの上乗せ（2つ以上を同時に取ったときに、単独の合計からずれる分）。
+    # 単独の差と同じ幅（±2点程度）。±1点にすると上乗せを小さく見積もりすぎ、90%の幅の正しさが
+    # 42〜55%まで落ちた（偽データ、CALIBRATION.md v0.5.0）。±2点で87〜97%
+    "interaction_sd": 2.0,
     # 基準値：0〜10の記録の真ん中あたり、幅広く
     "intercept_mean": 5.0,
     "intercept_sd": 5.0,
@@ -71,7 +76,9 @@ class Fit:
     n_used: int  # 推定に使えた日のペア数
     priors: dict = field(default_factory=dict)
     diag: dict | None = None  # fit_chains のときの収束診断
-    lag_draws: np.ndarray | None = None  # 遅れの候補の番号（treat_options の行）
+    lag_draws: np.ndarray | None = None  # 遅れの候補の番号（最初の要因の候補の行）
+    option_draws: np.ndarray | None = None  # 要因ごとの候補の番号（回数, 要因の数）。要因が1つなら lag_draws と同じ
+    factor_names: list[str] | None = None  # option_draws の列がどの列名の要因か
     nu_draws: np.ndarray | None = None  # t 分布の自由度（小さいほど裾が重い）
     weight_mean: np.ndarray | None = None  # 推定に使った日ごとの重みの平均（1=ふつう、小さいほど外れた日）
     weight_day: np.ndarray | None = None  # weight_mean がどの日のものか
@@ -92,17 +99,42 @@ def _standardize(x: np.ndarray) -> np.ndarray:
     return np.nan_to_num((x - np.nanmean(x)) / sd, nan=0.0)
 
 
+def is_term(name: str) -> bool:
+    """飲んだ影響を表す列か（主要な成分・追加の要因・組み合わせの上乗せ）。"""
+    return name == "treatment" or name.startswith("factor:") or name.startswith("x:")
+
+
+def interaction_parts(name: str) -> tuple[str, str]:
+    """組み合わせの列名 'x:A×B' から、もとの2つの列名を取り出す。"""
+    a, b = name[2:].split("×")
+    return a, b
+
+
 def build_design(
     day: np.ndarray,
     exposure: np.ndarray,
     covariates: dict[str, np.ndarray] | None = None,
+    extras: dict[str, np.ndarray] | None = None,
+    interactions: bool = False,
 ) -> tuple[np.ndarray, list[str]]:
     """説明に使う変数の表（設計行列）を作る。
 
     exposure は曝露量（0〜1程度）または 0/1。外部要因は標準化してそろえる。
+    extras（v0.5.0）：追加の成分・要因の曝露量。列名は 'factor:<名前>'。
+    interactions：True なら、すべての2つの組について「同時に取ったときの上乗せ」の列
+    （曝露量どうしの積、列名 'x:<列名>×<列名>'）を足す。
     """
     cols = [np.ones_like(day, dtype=float), np.asarray(exposure, dtype=float), _standardize(day.astype(float))]
     names = ["intercept", "treatment", "trend"]
+    for key, values in (extras or {}).items():
+        cols.append(np.asarray(values, dtype=float))
+        names.append(f"factor:{key}")
+    if interactions:
+        mains = [n for n in names if n == "treatment" or n.startswith("factor:")]
+        for i in range(len(mains)):
+            for j in range(i + 1, len(mains)):
+                cols.append(cols[names.index(mains[i])] * cols[names.index(mains[j])])
+                names.append(f"x:{mains[i]}×{mains[j]}")
     for name, values in (covariates or {}).items():
         cols.append(_standardize(np.asarray(values, dtype=float)))
         names.append(name)
@@ -129,11 +161,12 @@ def prepare(y, X, day, return_index: bool = False):
 NU_GRID = np.array([3.0, 5.0, 10.0, 30.0, 100.0])
 
 
-def _log_gamma_weights(w: np.ndarray, nu: float) -> float:
-    from scipy.special import gammaln
+_NU_CONST = gammaln((NU_GRID + 1) / 2) - gammaln(NU_GRID / 2) - 0.5 * np.log(NU_GRID * np.pi)
 
-    a = nu / 2
-    return float(np.sum(a * np.log(a) - gammaln(a) + (a - 1) * np.log(w) - a * w))
+
+def _t_loglik(z: np.ndarray) -> np.ndarray:
+    """自由度の候補ごとの、t 分布の対数尤度の合計（日ごとの重みを消した形）。"""
+    return _NU_CONST * len(z) - (NU_GRID + 1) / 2 * np.log1p(z[None, :] ** 2 / NU_GRID[:, None]).sum(axis=1)
 
 
 def fit(
@@ -149,26 +182,39 @@ def fit(
     treat_options: np.ndarray | None = None,
     option_logprior: np.ndarray | None = None,
     robust: bool = False,
+    factors: list[dict] | None = None,
 ) -> Fit:
     """自己相関つきベイズ回帰をギブスサンプリングで推定する（1本）。
 
     treat_options：「treatment」列の候補（遅れの長さごとの曝露量、行=候補、列=日）。
         与えると、どの候補がデータに合うかも推定する（option_logprior はその事前の重み）。
+    factors（v0.5.0）：複数の成分・要因それぞれの候補。{"name": 列名, "options": 行=候補・列=日, "logprior": 事前の重み}
+        のリスト。要因ごとに候補を順番に選び直す。'x:A×B' の列（組み合わせの上乗せ）は、
+        そのときの A 列と B 列の積として毎回作り直す。treat_options は factors=[treatment 1つ] の略記。
     robust：揺れを t 分布にし、外れた日の重みを下げる。
     """
     pr = {**DEFAULT_PRIORS, **(priors or {})}
     rng = np.random.default_rng(seed)
     X = np.array(X, dtype=float)
-    jt = names.index("treatment") if "treatment" in names else None
-    opts = None
-    if treat_options is not None:
-        opts_all = np.asarray(treat_options, dtype=float)
-        lp = np.zeros(len(opts_all)) if option_logprior is None else np.asarray(option_logprior, dtype=float)
-        g = int(np.argmax(lp))
-        X[:, jt] = opts_all[g]
+    if factors is None and treat_options is not None:
+        factors = [{"name": "treatment", "options": treat_options,
+                    "logprior": np.zeros(len(treat_options)) if option_logprior is None else option_logprior}]
+    ints = []  # (組み合わせの列, 元の列a, 元の列b)
+    for n_ in names:
+        if n_.startswith("x:"):
+            ca, cb = interaction_parts(n_)
+            ints.append((names.index(n_), names.index(ca), names.index(cb)))
+    facs = []
+    for fc in factors or []:
+        o = np.asarray(fc["options"], dtype=float)
+        lp_ = np.asarray(fc["logprior"], dtype=float)
+        facs.append({"name": fc["name"], "j": names.index(fc["name"]), "all": o, "lp": lp_, "g": int(np.argmax(lp_))})
+        X[:, facs[-1]["j"]] = o[facs[-1]["g"]]
+    for ji, ja, jb in ints:
+        X[:, ji] = X[:, ja] * X[:, jb]
     y, X, day, cur, prev, idx = prepare(y, X, day, return_index=True)
-    if treat_options is not None:
-        opts = opts_all[:, idx]
+    for fk in facs:
+        fk["opts"] = fk["all"][:, idx]
     w = np.ones(len(cur))
     nu = float(NU_GRID[-1])
 
@@ -177,8 +223,11 @@ def fit(
     b0[0] = pr["intercept_mean"]
     prior_sd = np.full(k, pr["other_sd"])
     prior_sd[names.index("intercept")] = pr["intercept_sd"]
-    if "treatment" in names:
-        prior_sd[names.index("treatment")] = pr["treatment_sd"]
+    for i_, n_ in enumerate(names):
+        if n_ == "treatment" or n_.startswith("factor:"):
+            prior_sd[i_] = pr["treatment_sd"]
+        elif n_.startswith("x:"):
+            prior_sd[i_] = pr["interaction_sd"]
     B0_inv = np.diag(1.0 / prior_sd**2)
 
     beta = np.linalg.lstsq(X, y, rcond=None)[0]
@@ -193,10 +242,9 @@ def fit(
     beta_out = np.empty((n_draws, k))
     rho_out = np.empty(n_draws)
     sig_out = np.empty(n_draws)
-    lag_out = np.empty(n_draws, dtype=int) if opts is not None else None
+    opt_out = np.empty((n_draws, len(facs)), dtype=int) if facs else None
     nu_out = np.empty(n_draws) if robust else None
     w_sum = np.zeros(len(cur))
-    g = int(np.argmax(lp)) if opts is not None else 0
 
     for it in range(total):
         # 1) 引きずりを取り除いた形に変換して、係数を推定し直す（外れた日は重みを下げる）
@@ -224,38 +272,58 @@ def fit(
                 rho = cand
                 break
 
-        # 4) 記録に現れるまでの遅れを選び直す（候補ごとの当てはまり × 事前の重み）
-        if opts is not None:
+        # 4) 記録に現れるまでの遅れ・形を、要因ごとに選び直す（候補ごとの当てはまり × 事前の重み）
+        for fk in facs:
+            j = fk["j"]
+            own_ints = [(ji, ja, jb) for ji, ja, jb in ints if j in (ja, jb)]
             ys = y[cur] - rho * y[prev]
-            base = (X[cur] - rho * X[prev]) @ beta - beta[jt] * (X[cur, jt] - rho * X[prev, jt])
-            e = ys[None, :] - base[None, :] - beta[jt] * (opts[:, cur] - rho * opts[:, prev])
-            ll = -0.5 * (e**2 @ w) / sigma2 + lp
+            Xs = X[cur] - rho * X[prev]
+            base = Xs @ beta - beta[j] * Xs[:, j]
+            for ji, _, _ in own_ints:
+                base = base - beta[ji] * Xs[:, ji]
+            opts = fk["opts"]
+            contrib = beta[j] * (opts[:, cur] - rho * opts[:, prev])
+            for ji, ja, jb in own_ints:
+                other = X[:, jb if ja == j else ja]
+                prod = opts * other[None, :]
+                contrib = contrib + beta[ji] * (prod[:, cur] - rho * prod[:, prev])
+            e = ys[None, :] - base[None, :] - contrib
+            ll = -0.5 * (e**2 @ w) / sigma2 + fk["lp"]
             pg = np.exp(ll - ll.max())
-            g = int(rng.choice(len(pg), p=pg / pg.sum()))
-            X[:, jt] = opts[g]
+            fk["g"] = int(rng.choice(len(pg), p=pg / pg.sum()))
+            X[:, j] = opts[fk["g"]]
+            for ji, ja, jb in own_ints:
+                X[:, ji] = X[:, ja] * X[:, jb]
 
         # 5) 外れた日の重みと、裾の重さ（自由度）を推定し直す
         if robust:
+            # 自由度は、日ごとの重みを消した（周辺化した）t 分布の尤度から先に選び、そのあと重みを選ぶ。
+            # 重みを残したまま自由度を選ぶと、自由度と重みが連動して動きにくく、
+            # 組み合わせの上乗せのように幅の広い項目で有効な推定回数が足りなくなった（v0.5.0）
             e = (y[cur] - rho * y[prev]) - (X[cur] - rho * X[prev]) @ beta
-            w = rng.gamma((nu + 1) / 2, 2 / (nu + e**2 / sigma2))
-            w = np.maximum(w, 1e-6)
-            lnu = np.array([_log_gamma_weights(w, v) for v in NU_GRID])
+            z = e / np.sqrt(sigma2)
+            lnu = _t_loglik(z)
             pn = np.exp(lnu - lnu.max())
             nu = float(rng.choice(NU_GRID, p=pn / pn.sum()))
+            w = rng.gamma((nu + 1) / 2, 2 / (nu + e**2 / sigma2))
+            w = np.maximum(w, 1e-6)
 
         if it >= n_burn:
-            j = it - n_burn
-            beta_out[j] = beta
-            rho_out[j] = rho
-            sig_out[j] = np.sqrt(sigma2)
-            if lag_out is not None:
-                lag_out[j] = g
+            j_ = it - n_burn
+            beta_out[j_] = beta
+            rho_out[j_] = rho
+            sig_out[j_] = np.sqrt(sigma2)
+            if opt_out is not None:
+                opt_out[j_] = [fk["g"] for fk in facs]
             if nu_out is not None:
-                nu_out[j] = nu
+                nu_out[j_] = nu
             w_sum += w
 
     f = Fit(names, beta_out, rho_out, sig_out, len(cur), pr)
-    f.lag_draws = lag_out
+    if opt_out is not None:
+        f.lag_draws = opt_out[:, 0]
+        f.option_draws = opt_out
+        f.factor_names = [fk["name"] for fk in facs]
     f.nu_draws = nu_out
     if robust:
         f.weight_mean = w_sum / n_draws
@@ -292,6 +360,8 @@ def fit_chains(
     )
     if fits[0].lag_draws is not None:
         f.lag_draws = np.concatenate([g.lag_draws for g in fits])
+        f.option_draws = np.vstack([g.option_draws for g in fits])
+        f.factor_names = fits[0].factor_names
     if fits[0].nu_draws is not None:
         f.nu_draws = np.concatenate([g.nu_draws for g in fits])
         f.weight_mean = np.mean([g.weight_mean for g in fits], axis=0)
@@ -300,6 +370,7 @@ def fit_chains(
     f.diag = {
         "treatment": check(np.array([g.beta_draws[:, j] for g in fits])),
         "rho": check(np.array([g.rho_draws for g in fits])),
+        "terms": {n_: check(np.array([g.beta_draws[:, i_] for g in fits])) for i_, n_ in enumerate(names) if is_term(n_)},
         "n_chains": n_chains,
         "n_draws": n_draws,
     }

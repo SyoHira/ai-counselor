@@ -430,3 +430,151 @@ def test_quantum_hierarchical_recovers_model_and_person_angles():
     est = np.array([p["theta"] for p in r["quantum"]["people"]])
     assert np.sqrt(np.mean((est - th) ** 2)) < 0.25
     assert compare_hier(simulate_people_classical(12, 14, np.array([0.35, 0.15, 0.2, 0.3]), 20, rng))["better"] == "classical"
+
+
+# ---------------------------------------------------------------- v0.5.0 複数の成分・要因の掛け合わせ
+
+
+def test_factorial_schedule_is_balanced_in_conditions_and_time():
+    from n1engine.design import make_factorial_schedule
+
+    for seed in range(12):
+        s = make_factorial_schedule(seed=seed)
+        assert len(s) == 56
+        lv = np.array([d.levels for d in s])
+        cond = lv[:, 0] + 2 * lv[:, 1]
+        for c in range(4):
+            assert (cond == c).sum() == 14  # どの条件も14日（2期間）
+            assert abs(np.mean(np.where(cond == c)[0]) - np.mean(np.arange(56))) < 1e-9  # 時間の流れが偏らない
+        blocks = cond[::7]
+        pairs = {(a, b) for a, b in zip(blocks[:-1], blocks[1:]) if a != b}
+        assert len(pairs) >= 6  # 持ち越しが特定の順番に偏らない
+        assert abs(np.corrcoef(lv[:, 0], lv[:, 1])[0, 1]) < 1e-9  # AとBが無相関
+
+
+def _factorial_record(seed, effects=(2.0, -1.5), inter=0.0):
+    from n1engine.design import make_factorial_schedule
+    from n1engine.simulate import fake_factorial
+
+    days = make_factorial_schedule(seed=seed)
+    day = np.array([d.day for d in days])
+    _, ex, y = fake_factorial(effects, inter, rho=0.4, seed=seed)
+    d = {"day": day, "treat": np.array([x.levels[0] for x in days]), "treat_b": np.array([x.levels[1] for x in days]), "outcome": y}
+    return d
+
+
+def test_multi_factor_recovers_main_effects_and_interaction():
+    from n1engine.pipeline import Factor, analyze
+
+    res = analyze(_factorial_record(5, (2.5, -2.0), 2.5), primary="outcome", extras=[Factor("b", "B", None, 8.0)],
+                  n_draws=500, null_sims=100, secondary=False)
+    m = res.primary.multi
+    a, b = m["factors"][0]["v"], m["factors"][1]["v"]
+    assert a.p_better > 0.95 and b.p_better < 0.05
+    assert m["interactions"][0]["v"].effect_mean > 0.5
+    # 一緒 = Aだけ + Bだけ + 上乗せ
+    both = m["both"].effect_mean
+    assert abs(both - (a.effect_mean + b.effect_mean + m["interactions"][0]["v"].effect_mean)) < 0.15
+    assert all(t["ok"] for t in res.primary.fit.diag["terms"].values())
+    assert max(m["vif"].values()) < 5
+
+
+def test_multi_factor_null_does_not_raise_many_alarms():
+    from n1engine.pipeline import Factor, analyze
+
+    alarms = 0
+    for s in range(12):
+        res = analyze(_factorial_record(200 + s, (0.0, 0.0), 0.0), primary="outcome", extras=[Factor("b", "B", None, 8.0)],
+                      n_draws=300, null_sims=50, secondary=False)
+        m = res.primary.multi
+        for t in m["factors"] + m["interactions"]:
+            alarms += t["v"].p_better >= 0.95 or t["v"].p_better <= 0.05
+    assert alarms / (12 * 3) <= 0.25
+
+
+def test_single_factor_path_is_unchanged_by_multi_support():
+    # 追加の要因がないとき、列は従来どおり（上乗せの列も、追加の要因の列も無い）
+    day, treat, y, _ = fake_experiment(1.0, seed=3)
+    X, names = build_design(day, treat)
+    assert names == ["intercept", "treatment", "trend"]
+    Xm, nm = build_design(day, treat, extras={"b": treat * 0.5}, interactions=True)
+    assert nm == ["intercept", "treatment", "trend", "factor:b", "x:treatment×factor:b"]
+    assert np.allclose(Xm[:, 4], Xm[:, 1] * Xm[:, 3])
+
+
+def test_interaction_column_follows_chosen_lag_options():
+    # 組み合わせの列は、そのとき選ばれた遅れ・形の列どうしの積になる
+    from n1engine.domain import pd as pdm
+    from n1engine.model import fit
+
+    day = np.arange(1, 57)
+    ta = np.repeat([0, 1, 1, 0, 0, 1, 1, 0], 7).astype(float)
+    tb = np.repeat([0, 0, 1, 1, 1, 1, 0, 0], 7).astype(float)
+    rng = np.random.default_rng(0)
+    y = 5 + 2 * ta + rng.normal(0, 1, 56)
+    X, names = build_design(day, ta, extras={"b": tb}, interactions=True)
+    fs = [{"name": "treatment", "options": pdm.options(ta), "logprior": pdm.log_prior()},
+          {"name": "factor:b", "options": pdm.options(tb), "logprior": pdm.log_prior()}]
+    f = fit(y, X, day, names, n_draws=200, n_burn=100, seed=0, factors=fs)
+    assert f.option_draws.shape == (200, 2) and f.factor_names == ["treatment", "factor:b"]
+    assert np.array_equal(f.lag_draws, f.option_draws[:, 0])
+
+
+def test_missing_extra_column_is_reported():
+    from n1engine.pipeline import Factor, analyze
+
+    d = _factorial_record(1)
+    del d["treat_b"]
+    with pytest.raises(ValueError, match="phase_b"):
+        analyze(d, primary="outcome", extras=[Factor("b", "B")], n_draws=100, null_sims=10)
+
+
+def test_load_reads_extra_phase_columns_and_cli_report_has_combination(tmp_path):
+    from n1engine.design import make_factorial_schedule
+    from n1engine.run import load, main
+    from n1engine.simulate import fake_factorial
+
+    days = make_factorial_schedule(seed=7)
+    _, ex, y = fake_factorial((2.0, 1.0), 1.0, seed=7)
+    p = tmp_path / "f.csv"
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write("day,phase,phase_theanine,outcome\n")
+        for d_, v in zip(days, y):
+            fh.write(f"{d_.day},{'B' if d_.levels[0] else 'A'},{'B' if d_.levels[1] else 'A'},{v:.3f}\n")
+    d = load(str(p))
+    assert set(d) >= {"treat", "treat_theanine"} and d["treat_theanine"].sum() == 28
+    out = tmp_path / "r.md"
+    main(["analyze", str(p), "--item", "カフェイン×テアニン", "--substance", "caffeine", "--dose-hour", "8",
+          "--extra", "theanine:theanine:8", "--out", str(out)])
+    md = out.read_text(encoding="utf-8")
+    assert "上乗せ" in md and "カフェインだけ" in md and "L-テアニンだけ" in md
+    for word in ("効果", "効く", "効力", "効き"):
+        assert word not in md
+
+
+def test_cohort_key_separates_combinations(tmp_path):
+    from n1engine.cohort import CohortStore
+    from n1engine.domain.substances import SUBSTANCES
+    from n1engine.pipeline import Factor, analyze
+
+    store = CohortStore(tmp_path / "c.json")
+    d = _factorial_record(9)
+    analyze(d, primary="outcome", substance=SUBSTANCES["caffeine"], extras=[Factor("b", "B", None, 8.0)], cohort=store,
+            client_id="x", n_draws=200, null_sims=10, secondary=False)
+    assert store.items[0].substance == "caffeine×b"
+
+
+def test_three_factors_run_and_report_vif():
+    # 3つ以上は検証していないが、動く。8条件を1回ずつの56日は重なりが大きく、レポートに出る
+    from n1engine.pipeline import Factor, analyze
+
+    rng = np.random.default_rng(1)
+    conds = np.arange(8)
+    rng.shuffle(conds)
+    c = np.repeat(conds, 7)
+    d = {"day": np.arange(1, 57), "treat": c & 1, "treat_b": (c >> 1) & 1, "treat_c": (c >> 2) & 1,
+         "outcome": np.clip(5 + 1.5 * (c & 1) + rng.normal(0, 1, 56), 0, 10)}
+    res = analyze(d, primary="outcome", extras=[Factor("b", "B"), Factor("c", "C")], n_draws=200, null_sims=20, secondary=False)
+    m = res.primary.multi
+    assert len(m["factors"]) == 3 and len(m["interactions"]) == 3
+    assert max(m["vif"].values()) > 5
