@@ -10,6 +10,7 @@ pip install -r requirements.txt
 python examples/make_example.py          # 見本の記録を作る（カフェイン15時、答え＝寝つき+8分）
 python -m n1engine.run analyze examples/example.csv \
   --item "カフェイン（15時）" --outcome sol --substance caffeine --dose-hour 15 --out report.md
+python examples/make_factorial_example.py  # 2成分の掛け合わせの見本（カフェイン×テアニン、レポートつき）
 python -m n1engine.run substances        # 成分の一覧と、7日ずつの入れ替えに向いているか
 python -m n1engine.run plan 普段の記録.csv --substance caffeine --dose-hour 15 --outcome sol
 python -m pytest -q tests                # 壊れていないかの確認（2分前後）
