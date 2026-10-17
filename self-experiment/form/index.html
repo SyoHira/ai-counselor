@@ -1,0 +1,768 @@
+<title>1人実験ノート</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: スマホで毎日つける記録帳。1カラム、上に今日の状態（何日目・飲む日か）、下にその日の記入カード */
+:root{
+  --bg:#f2f5f3; --surface:#ffffff; --sunk:#e8eeeb; --ink:#16201c; --muted:#56645e; --faint:#7d8a84;
+  --rule:#d3dcd8; --accent:#1d6b57; --accent-ink:#ffffff; --accent-soft:#dcece6;
+  --dose:#b0640f; --dose-soft:#f6e7d3; --rest:#56697a; --rest-soft:#e1e8ee;
+  --ok:#1f7a4d; --warn:#9a5b00; --warn-soft:#faefd9; --bad:#b03a2e; --bad-soft:#f9e3e0;
+  --font:'Zen Kaku Gothic New','Hiragino Kaku Gothic ProN','Yu Gothic',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1513; --surface:#17201c; --sunk:#111917; --ink:#e6eeea; --muted:#9db0a8; --faint:#76877f;
+    --rule:#2a3732; --accent:#4fb393; --accent-ink:#0b1411; --accent-soft:#1b3129;
+    --dose:#e09a4a; --dose-soft:#33261a; --rest:#93a9bb; --rest-soft:#1e2933;
+    --ok:#62c48f; --warn:#e3a64c; --warn-soft:#2f2614; --bad:#ec8a7e; --bad-soft:#331c19;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1513; --surface:#17201c; --sunk:#111917; --ink:#e6eeea; --muted:#9db0a8; --faint:#76877f;
+  --rule:#2a3732; --accent:#4fb393; --accent-ink:#0b1411; --accent-soft:#1b3129;
+  --dose:#e09a4a; --dose-soft:#33261a; --rest:#93a9bb; --rest-soft:#1e2933;
+  --ok:#62c48f; --warn:#e3a64c; --warn-soft:#2f2614; --bad:#ec8a7e; --bad-soft:#331c19;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.7;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
+.wrap{max-width:660px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.num,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--surface);border-bottom:1px solid var(--rule)}
+header.top .wrap{padding-block:12px 0;display:grid;gap:10px}
+.brand{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand h1{font-size:18px;font-weight:700;margin:0;letter-spacing:.02em}
+.brand .item{font-size:13px;color:var(--muted)}
+.status{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.daycount{font-family:var(--mono);font-size:13px;color:var(--muted)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;padding:3px 12px;border-radius:99px;border:1px solid transparent;white-space:nowrap}
+.chip.dose{background:var(--dose-soft);color:var(--dose)}
+.chip.rest{background:var(--rest-soft);color:var(--rest)}
+.chip.base{border-color:var(--rule);color:var(--muted)}
+.chip.off{background:var(--sunk);color:var(--faint)}
+.chip .dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+nav.tabs{display:flex;gap:2px;overflow-x:auto}
+nav.tabs button{flex:1 0 auto;background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);font:inherit;font-size:14px;font-weight:500;padding:8px 10px 9px;cursor:pointer}
+nav.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+nav.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+main .wrap{padding-block:18px 64px;display:grid;gap:16px}
+.notice{border:1px solid var(--rule);background:var(--surface);border-radius:8px;padding:12px 14px;font-size:14px;color:var(--muted)}
+.notice.warn{border-color:transparent;background:var(--warn-soft);color:var(--warn)}
+.notice.bad{border-color:transparent;background:var(--bad-soft);color:var(--bad)}
+.notice b{color:inherit}
+
+section.card{background:var(--surface);border:1px solid var(--rule);border-radius:10px;overflow:hidden}
+.card-head{padding:14px 16px 10px;display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--rule)}
+.card-head h2{font-size:16px;margin:0;font-weight:700;text-wrap:balance}
+.card-head .when{font-size:12.5px;color:var(--faint)}
+.card-body{padding:14px 16px 16px;display:grid;gap:18px}
+.card-foot{padding:12px 16px;border-top:1px solid var(--rule);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--sunk)}
+.saved{font-size:13px;color:var(--faint)}
+.saved.ok{color:var(--ok)}
+.saved.err{color:var(--bad)}
+
+.field{display:grid;gap:6px;min-width:0}
+.field>label,.field>.lab{font-size:14px;font-weight:500;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.field .hint{font-size:12.5px;color:var(--faint);font-weight:400}
+.primary-tag{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--accent);background:var(--accent-soft);padding:1px 8px;border-radius:99px}
+.row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 14px}
+.row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 14px}
+@media (max-width:440px){.row3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+input[type=time],input[type=date],input[type=number],input[type=text],select,textarea{
+  font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
+input[type=number],input[type=time]{font-family:var(--mono);font-variant-numeric:tabular-nums}
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+.unit{display:flex;align-items:center;gap:8px}
+.unit span{font-size:13px;color:var(--muted);white-space:nowrap}
+
+.scale{display:grid;grid-template-columns:repeat(11,minmax(0,1fr));gap:4px}
+.scale button{font-family:var(--mono);font-size:14px;padding:8px 0;border:1px solid var(--rule);background:var(--bg);color:var(--ink);border-radius:6px;cursor:pointer;min-width:0}
+.scale button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.scale button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.ends{display:flex;justify-content:space-between;font-size:12px;color:var(--faint)}
+
+.toggles{display:flex;gap:8px;flex-wrap:wrap}
+.tog{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--rule);border-radius:99px;padding:6px 14px;font-size:14px;cursor:pointer;background:var(--bg);user-select:none}
+.tog input{accent-color:var(--accent);width:16px;height:16px;margin:0}
+.seg{justify-self:start;display:inline-flex;border:1px solid var(--rule);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--bg);color:var(--ink);font:inherit;font-size:14px;padding:8px 14px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--rule)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.stepper{display:inline-flex;align-items:center;border:1px solid var(--rule);border-radius:8px;overflow:hidden;background:var(--bg)}
+.stepper button{border:0;background:none;color:var(--ink);font-size:18px;width:40px;height:38px;cursor:pointer}
+.stepper output{font-family:var(--mono);min-width:44px;text-align:center;font-size:16px}
+.derived{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);background:var(--sunk);border-radius:8px;padding:8px 12px}
+.derived b{font-family:var(--mono);color:var(--ink);font-weight:500}
+.err-text{font-size:12.5px;color:var(--bad)}
+
+button.primary{background:var(--accent);color:var(--accent-ink);border:0;border-radius:8px;font:inherit;font-weight:700;font-size:15px;padding:10px 20px;cursor:pointer}
+button.primary:disabled{opacity:.45;cursor:not-allowed}
+button.ghost{background:none;border:1px solid var(--rule);color:var(--ink);border-radius:8px;font:inherit;font-size:14px;padding:8px 14px;cursor:pointer}
+button.primary:focus-visible,button.ghost:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* 記録一覧 */
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.cal .wk{font-size:11px;color:var(--faint);text-align:center}
+.cell{border:1px solid var(--rule);border-radius:8px;background:var(--surface);padding:6px 4px 5px;display:grid;gap:3px;justify-items:center;cursor:pointer;font:inherit;color:var(--ink);min-width:0}
+.cell.dose{border-top:4px solid var(--dose)}
+.cell.rest{border-top:4px solid var(--rest)}
+.cell.base{border-top:4px dashed var(--faint)}
+.cell.blank{visibility:hidden}
+.cell.today{outline:2px solid var(--accent);outline-offset:1px}
+.cell .d{font-family:var(--mono);font-size:13px}
+.cell .marks{display:flex;gap:3px}
+.cell .m{width:7px;height:7px;border-radius:50%;border:1px solid var(--faint)}
+.cell .m.on{background:var(--accent);border-color:var(--accent)}
+.cell[aria-current="true"]{background:var(--accent-soft)}
+.blockbar{display:flex;gap:4px;flex-wrap:wrap}
+.blockbar span{font-family:var(--mono);font-size:12px;padding:2px 8px;border-radius:4px}
+.blockbar .A{background:var(--rest-soft);color:var(--rest)}
+.blockbar .B{background:var(--dose-soft);color:var(--dose)}
+.blockbar .base{border:1px dashed var(--faint);color:var(--muted)}
+
+h3{font-size:14px;margin:0;font-weight:700}
+.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;font-size:14px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0}
+pre.cmd{font-family:var(--mono);font-size:12.5px;background:var(--sunk);border-radius:8px;padding:10px 12px;overflow-x:auto;white-space:pre;margin:0}
+.dl{display:grid;gap:10px}
+.dlrow{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;border:1px solid var(--rule);border-radius:8px;padding:10px 12px}
+.dlrow .meta{font-size:13px;color:var(--muted)}
+textarea.csv{font-family:var(--mono);font-size:12px;height:160px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <h1>1人実験ノート</h1>
+      <span class="item" id="itemName">設定がまだです</span>
+    </div>
+    <div class="status" id="status"><span class="chip off">記録の準備中</span></div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" id="tab-today" aria-selected="true" data-tab="today">今日</button>
+      <button role="tab" id="tab-days" aria-selected="false" data-tab="days">記録一覧</button>
+      <button role="tab" id="tab-setup" aria-selected="false" data-tab="setup">設定</button>
+      <button role="tab" id="tab-export" aria-selected="false" data-tab="export">書き出し</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap" id="view">
+    <div class="notice">記録を読み込んでいます。設定がまだなら「設定」から、試すもの・飲む時刻・主要項目を決めると、毎日の記入欄がここに出ます。</div>
+  </div>
+</main>
+
+<script>
+(() => {
+"use strict";
+
+/* ---------- 成分と記録項目（engine の domain/substances.py・variables.py と同じ値） ---------- */
+const SUBSTANCES = {
+  caffeine:  {name:"カフェイン", th:5, tmax:1, level:"ok", text:"7日ずつの入れ替えに向いている（体内量の差は0/1で切り替える場合の99%）。"},
+  theanine:  {name:"L-テアニン", th:65/60, tmax:0.8, level:"ok", text:"7日ずつの入れ替えに向いている。数時間で体からほぼ消える。"},
+  vitamin_d: {name:"ビタミンD", th:17.5*24, tmax:null, level:"bad", text:"向かない。血中の量が半分になるまで2〜3週間、安定まで2〜3か月かかり、7日ずつ入れ替えても体内量がほとんど変わらない。"},
+  omega3:    {name:"オメガ3（EPA・DHA）", th:null, tmax:null, level:"bad", text:"向かない。安定まで4〜6か月かかる。"},
+  magnesium: {name:"マグネシウム", th:null, tmax:null, level:"info", text:"体内量が一定に保たれ、半減期で表せない。飲んだ日=1・飲まない日=0として分析する。"},
+  custom:    {name:"一覧にない成分（半減期を入力）", th:null, tmax:null, level:"info", text:""},
+  none:      {name:"成分を指定しない", th:null, tmax:null, level:"info", text:"飲んだ日=1・飲まない日=0として分析する。飲み始めや持ち越しは考慮しない。"},
+};
+/* 半減期（時間）→ 7日ずつ入れ替えたときの体内量の差（engine の exposure_contrast で計算） */
+const CONTRAST = [[12,.952],[18,.906],[24,.858],[30,.809],[36,.762],[48,.673],[60,.594],[72,.524],[84,.465],[96,.414]];
+
+const OUTCOMES = {
+  sol:    {label:"寝つくまでの時間", unit:"分", timing:"night", better:-1},
+  waso:   {label:"途中で目が覚めていた時間", unit:"分", timing:"night", better:-1},
+  sleep:  {label:"睡眠の質", unit:"0〜10", timing:"night", better:1},
+  tst:    {label:"眠っていた時間", unit:"分", timing:"night", better:0},
+  se:     {label:"睡眠効率", unit:"%", timing:"night", better:1},
+  rhr:    {label:"睡眠中の心拍数", unit:"拍/分", timing:"night", better:0, wear:true},
+  rmssd:  {label:"心拍変動（RMSSD）", unit:"ミリ秒", timing:"night", better:0, wear:true},
+  mood:   {label:"気分", unit:"0〜10", timing:"day", better:1},
+  stress: {label:"ストレス", unit:"0〜10", timing:"day", better:-1},
+  outcome:{label:"自分で決めた項目", unit:"0〜10", timing:null, better:1, custom:true},
+};
+const BASELINE_DAYS = 7, BLOCK = 7;
+const SEQS = {short:["ABBA","BAAB"], cycle:["ABABBABA","BABAABAB"], dose:["AHBBHA","BHAAHB"]};
+const PHASE_WORD = {A:"飲まない", B:"飲む", H:"半分の量"};
+
+/* ---------- 日付 ---------- */
+const pad = n => String(n).padStart(2,"0");
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const parse = s => { const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); };
+const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate()+n); return ymd(d); };
+const diffDays = (a, b) => Math.round((parse(a) - parse(b)) / 86400000);
+const WD = ["日","月","火","水","木","金","土"];
+const md = s => { const d = parse(s); return `${d.getMonth()+1}月${d.getDate()}日（${WD[d.getDay()]}）`; };
+const today = () => ymd(new Date());
+const toHours = t => { if (!t) return null; const [h,m] = t.split(":").map(Number); return h + m/60; };
+const fmtH = h => `${Math.floor(h)}:${pad(Math.round((h%1)*60))}`;
+
+/* ---------- 状態 ---------- */
+let db = null, downloads = null, canWrite = true;
+let config = null, configLoaded = false, days = {}, daysLoaded = false;
+let tab = "today", selected = null;
+const view = document.getElementById("view");
+
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "text") e.textContent = v;
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return e;
+}
+
+/* ---------- 実験の日程 ---------- */
+function schedule(c) {
+  if (!c || !c.startDate || !c.sequence) return null;
+  const expStart = addDays(c.startDate, BASELINE_DAYS);
+  const expDays = c.sequence.length * BLOCK;
+  return {start:c.startDate, expStart, expDays, end:addDays(expStart, expDays - 1)};
+}
+function dayInfo(date, c = config) {
+  const s = schedule(c);
+  if (!s) return {kind:"none"};
+  const i = diffDays(date, s.start);
+  if (i < 0) return {kind:"before", until:-i};
+  if (i < BASELINE_DAYS) return {kind:"base", n:i+1};
+  const k = i - BASELINE_DAYS + 1;
+  if (k <= s.expDays) return {kind:"exp", n:k, phase:c.sequence[Math.floor((k-1)/BLOCK)]};
+  return {kind:"after"};
+}
+function washoutDays(c) {
+  const th = halfLife(c);
+  return th ? Math.max(1, Math.ceil(5*th/24)) : null;
+}
+function halfLife(c) {
+  if (!c) return null;
+  if (c.substance === "custom") return Number(c.customTh) || null;
+  return SUBSTANCES[c.substance]?.th ?? null;
+}
+function suitability(c) {
+  const s = SUBSTANCES[c.substance] || SUBSTANCES.none;
+  if (c.substance !== "custom") return {level:s.level, text:s.text};
+  const th = Number(c.customTh);
+  if (!th) return {level:"info", text:"半減期を入れると、7日ずつの入れ替えに向くかを計算します。"};
+  let v;
+  if (th <= CONTRAST[0][0]) v = .95;
+  else if (th >= 96) v = .414 * 96 / th;
+  else for (let i = 1; i < CONTRAST.length; i++) if (th <= CONTRAST[i][0]) {
+    const [x0,y0] = CONTRAST[i-1], [x1,y1] = CONTRAST[i]; v = y0 + (y1-y0)*(th-x0)/(x1-x0); break;
+  }
+  const pct = Math.round(v*100);
+  if (v >= .85) return {level:"ok", text:`向いている。飲む期間と飲まない期間の体内量の差は、0/1で切り替える場合の約${pct}%。`};
+  if (v >= .5) return {level:"warn", text:`持ち越しを計算に入れて実施できる。体内量の差は約${pct}%で、差を見つけるのに必要な日数はおよそ${(1/v/v).toFixed(1)}倍になる。`};
+  return {level:"bad", text:`向かない。体内量の差は約${pct}%で、7日ずつ入れ替えても差がつきにくい。`};
+}
+function primaryOf(c) {
+  const o = OUTCOMES[c.primary] || OUTCOMES.outcome;
+  if (c.primary !== "outcome") return {key:c.primary, ...o};
+  return {key:"outcome", ...o, label:c.customLabel || o.label, timing:c.customTiming || "day", better:c.customLower ? -1 : 1};
+}
+
+/* ---------- 質問の順番（日ごとに入れ替え。順番で回答が偏るのを平均するため） ---------- */
+function seeded(str) { let h = 2166136261; for (const ch of str) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 100000) / 100000; }; }
+function shuffled(arr, key) { const r = seeded(key), a = arr.slice(); for (let i = a.length-1; i > 0; i--) { const j = Math.floor(r()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; }
+
+/* ---------- 睡眠日誌から計算する値 ---------- */
+function sleepDerived(n) {
+  if (!n) return {};
+  const bed = toHours(n.bed), tr = toHours(n.try_), wake = toHours(n.wake), up = toHours(n.up);
+  const wrap = (a, b) => { let x = b - a; if (x < 0) x += 24; return x * 60; };
+  const out = {};
+  if (bed != null && up != null) out.tib = Math.round(wrap(bed, up));
+  if (tr != null && wake != null && n.sol != null && n.waso != null) out.tst = Math.round(wrap(tr, wake) - n.sol - n.waso);
+  if (out.tst != null && out.tib) out.se = Math.round(out.tst / out.tib * 1000) / 10;
+  return out;
+}
+
+/* ---------- 画面の上部 ---------- */
+function renderTop() {
+  document.getElementById("itemName").textContent = config?.item ? `${config.item}・${md(today())}` : "設定がまだです";
+  const st = document.getElementById("status");
+  st.replaceChildren();
+  const info = dayInfo(today());
+  const s = schedule(config);
+  if (info.kind === "none") st.append(el("span", {class:"chip off", text:"設定がまだです"}));
+  else if (info.kind === "before") st.append(el("span", {class:"chip off", text:`普段の記録まであと${info.until}日`}));
+  else if (info.kind === "base") st.append(el("span", {class:"chip base"}, el("span",{class:"dot"}), "普段どおりの記録"), el("span", {class:"daycount", text:`${info.n} / ${BASELINE_DAYS}日目`}));
+  else if (info.kind === "exp" && config.blinded) st.append(el("span", {class:"chip base"}, el("span",{class:"dot"}), "渡されたカプセルを飲む日"), el("span", {class:"daycount", text:`実験 ${info.n} / ${s.expDays}日目`}));
+  else if (info.kind === "exp") st.append(info.phase === "A" ? el("span", {class:"chip rest"}, el("span",{class:"dot"}), "今日は飲まない日") : el("span", {class:"chip dose"}, el("span",{class:"dot"}), info.phase === "H" ? "今日は半分の量を飲む日" : "今日は飲む日"), el("span", {class:"daycount", text:`実験 ${info.n} / ${s.expDays}日目`}));
+  else st.append(el("span", {class:"chip off", text:"実験は終わりました。書き出しへ"}));
+}
+
+/* ---------- 記入カード ---------- */
+function scaleField(id, label, value, onPick, ends, isPrimary) {
+  const btns = [];
+  const wrap = el("div", {class:"scale", role:"group", "aria-label":label});
+  for (let i = 0; i <= 10; i++) {
+    const b = el("button", {type:"button", "aria-pressed":String(value === i), text:String(i), onclick:() => { onPick(i); btns.forEach((x,j) => x.setAttribute("aria-pressed", String(j === i))); }});
+    btns.push(b); wrap.append(b);
+  }
+  return el("div", {class:"field", id},
+    el("div", {class:"lab"}, label, isPrimary && el("span",{class:"primary-tag", text:"主要項目"})),
+    wrap, el("div", {class:"ends"}, el("span",{text:ends[0]}), el("span",{text:ends[1]})));
+}
+function numField(id, label, value, unit, onInput, opts = {}) {
+  const inp = el("input", {type:"number", id:id+"-in", inputmode:"decimal", min:opts.min ?? 0, max:opts.max, step:opts.step ?? 1, value:value ?? "", oninput:e => onInput(e.target.value === "" ? null : Number(e.target.value))});
+  return el("div", {class:"field", id}, el("label", {for:id+"-in"}, label, opts.primary && el("span",{class:"primary-tag", text:"主要項目"}), opts.hint && el("span",{class:"hint", text:opts.hint})), el("div",{class:"unit"}, inp, el("span",{text:unit})));
+}
+function timeField(id, label, value, onInput) {
+  const inp = el("input", {type:"time", id:id+"-in", value:value ?? "", oninput:e => onInput(e.target.value || null)});
+  return el("div", {class:"field", id}, el("label", {for:id+"-in", text:label}), inp);
+}
+function stepper(id, label, value, onChange) {
+  let v = value ?? 0;
+  const out = el("output", {id:id+"-out", text:String(v)});
+  const set = n => { v = Math.max(0, Math.min(20, n)); out.textContent = String(v); onChange(v); };
+  return el("div", {class:"field", id}, el("div", {class:"lab", text:label}),
+    el("div", {class:"stepper"}, el("button", {type:"button", "aria-label":"減らす", text:"−", onclick:() => set(v-1)}), out, el("button", {type:"button", "aria-label":"増やす", text:"+", onclick:() => set(v+1)})));
+}
+function checkTog(id, label, checked, onChange) {
+  const inp = el("input", {type:"checkbox", id, onchange:e => onChange(e.target.checked)});
+  inp.checked = !!checked;
+  return el("label", {class:"tog", for:id}, inp, label);
+}
+
+function saveBar(onSave, savedAt) {
+  const msg = el("span", {class:"saved", text: savedAt ? `保存済み ${new Date(savedAt).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})}` : "まだ保存していません"});
+  const btn = el("button", {class:"primary", type:"button", disabled:!db || !canWrite, text:"保存する"});
+  btn.addEventListener("click", async () => {
+    btn.disabled = true; msg.className = "saved"; msg.textContent = "保存しています";
+    try { await onSave(); msg.className = "saved ok"; msg.textContent = "保存しました"; }
+    catch (e) { msg.className = "saved err"; msg.textContent = saveError(e); }
+    finally { btn.disabled = !db || !canWrite; }
+  });
+  return el("div", {class:"card-foot"}, msg, btn);
+}
+function saveError(e) {
+  if (e?.code === "invalid_argument") return "この表示では保存できません（記録できるのは作成者だけです）";
+  if (e?.code === "quota_exceeded") return "保存できる量の上限です";
+  return "保存できませんでした。通信を確かめてもう一度押してください";
+}
+
+async function writePart(date, part, obj) {
+  const ref = db.doc("days/" + date);
+  const body = {date, [part]:obj, updatedAt:Date.now()};
+  const snap = await ref.get();
+  if (snap.exists) await ref.update(body); else await ref.set(body);
+}
+
+/* その日の日中（寝る前に記入） */
+function dayCard(date) {
+  const c = config, info = dayInfo(date), prim = primaryOf(c);
+  const saved = days[date]?.day || {};
+  const v = {...saved};
+  if (v.offday == null) { const wd = parse(date).getDay(); v.offday = wd === 0 || wd === 6; }
+  const body = el("div", {class:"card-body"});
+
+  const dosing = info.kind === "exp" && (c.blinded || info.phase !== "A");
+  if (dosing) {
+    if (v.taken == null) v.taken = true;
+    if (!v.dose) v.dose = c.doseTime;
+    const timeBox = timeField("dose-"+date, "実際に飲んだ時刻", v.dose, x => v.dose = x);
+    timeBox.hidden = !v.taken;
+    const seg = el("div", {class:"seg", role:"group", "aria-label":"飲んだか"});
+    const b1 = el("button", {type:"button", "aria-pressed":String(!!v.taken), text:"飲んだ"});
+    const b2 = el("button", {type:"button", "aria-pressed":String(!v.taken), text:"飲み忘れた"});
+    const pick = t => { v.taken = t; b1.setAttribute("aria-pressed", String(t)); b2.setAttribute("aria-pressed", String(!t)); timeBox.hidden = !t; };
+    b1.onclick = () => pick(true); b2.onclick = () => pick(false);
+    seg.append(b1, b2);
+    const what = c.blinded ? "渡されたカプセル" : info.phase === "H" ? `${c.item}（半分の量）` : c.item;
+    body.append(el("div", {class:"field"}, el("div",{class:"lab"}, what), seg), timeBox);
+    if (c.blinded) {
+      const bs = el("div", {class:"seg", role:"group", "aria-label":"本物だったと思うか"});
+      const opts = [[1,"本物"],[0,"空"],[null,"わからない"]].map(([val, lab]) => {
+        const bt = el("button", {type:"button", "aria-pressed":String(v.belief === val && v.belief_set === true), text:lab});
+        bt.onclick = () => { v.belief = val; v.belief_set = true; opts.forEach(o => o.setAttribute("aria-pressed", String(o === bt))); };
+        return bt;
+      });
+      bs.append(...opts);
+      body.append(el("div", {class:"field"}, el("div", {class:"lab"}, "今日のカプセルは本物だったと思いますか", el("span", {class:"hint", text:"当たっていなくて大丈夫"})), bs));
+    }
+  } else if (info.kind === "exp" && info.phase === "A") {
+    body.append(el("div", {class:"notice", text:`今日は飲まない日です。${c.item}は飲まずに、いつもどおり過ごしてください。`}));
+  }
+
+  /* はい／いいえの2問（研究層：質問の順番の量子モデル）。文脈をそろえるため、この日の最初に、順番を入れ替えて聞く */
+  const pairOrder = shuffled(["AB","BA"], date + "p")[0];
+  v.pair_order = pairOrder;
+  const PAIR = {qa:"今日の体の調子は良かったですか", qb:"今日の気分は良かったですか"};
+  const pairBox = el("div", {class:"field"}, el("div", {class:"lab"}, "はい／いいえで、思ったとおりに", el("span", {class:"hint", text:"上から順に答える"})));
+  for (const k of (pairOrder === "AB" ? ["qa","qb"] : ["qb","qa"])) {
+    const seg = el("div", {class:"seg", role:"group", "aria-label":PAIR[k]});
+    const yes = el("button", {type:"button", "aria-pressed":String(v[k] === 1), text:"はい"});
+    const no = el("button", {type:"button", "aria-pressed":String(v[k] === 0), text:"いいえ"});
+    yes.onclick = () => { v[k] = 1; yes.setAttribute("aria-pressed","true"); no.setAttribute("aria-pressed","false"); };
+    no.onclick = () => { v[k] = 0; no.setAttribute("aria-pressed","true"); yes.setAttribute("aria-pressed","false"); };
+    seg.append(yes, no);
+    pairBox.append(el("div", {class:"unit", style:"justify-content:space-between;flex-wrap:wrap;gap:8px"}, el("span", {style:"font-size:14px;color:var(--ink)", text:PAIR[k]}), seg));
+  }
+  body.prepend(pairBox);
+
+  const ratings = [{k:"mood", label:"今日の気分", ends:["とても悪い","とても良い"]}, {k:"stress", label:"今日のストレス", ends:["まったくない","とても強い"]}];
+  if (prim.key === "outcome" && prim.timing === "day") ratings.push({k:"outcome", label:prim.label, ends:prim.better < 0 ? ["まったくない","とても強い"] : ["とても悪い","とても良い"]});
+  const order = shuffled(ratings.map(r => r.k), date + "d");
+  v.order = order.join(">");
+  for (const k of order) {
+    const r = ratings.find(x => x.k === k);
+    body.append(scaleField(`${k}-${date}`, r.label, v[k], x => v[k] = x, r.ends, prim.key === k));
+  }
+
+  const life = el("div", {class:"row"});
+  life.append(stepper("alcohol-"+date, "飲酒（杯）", v.alcohol, x => v.alcohol = x));
+  if (c.substance !== "caffeine") life.append(stepper("coffee-"+date, "コーヒー・お茶などカフェイン飲料（杯）", v.coffee, x => v.coffee = x));
+  body.append(life);
+  const togs = el("div", {class:"toggles"},
+    checkTog("off-"+date, "休日だった", v.offday, x => v.offday = x),
+    checkTog("sick-"+date, "体調を崩していた（風邪など）", v.sick, x => v.sick = x));
+  if (c.cycle) togs.append(checkTog("period-"+date, "今日が月経の初日", v.period_start, x => v.period_start = x));
+  body.append(togs);
+  body.append(el("div", {class:"field"}, el("label", {for:"note-"+date, text:"メモ（分析には使いません）"}), el("textarea", {id:"note-"+date, rows:"2", oninput:e => v.note = e.target.value}, v.note || "")));
+
+  return el("section", {class:"card"},
+    el("div", {class:"card-head"}, el("h2", {text:`${md(date)}の日中`}), el("span", {class:"when", text:"寝る前に"})),
+    body, saveBar(() => writePart(date, "day", clean(v)), days[date]?.day && days[date].updatedAt));
+}
+
+/* その日の夜の睡眠（翌朝、起きてから1時間以内に記入） */
+function nightCard(date) {
+  const c = config, prim = primaryOf(c);
+  const saved = days[date]?.night || {};
+  const v = {...saved};
+  const prev = days[addDays(date, -1)]?.night || {};
+  for (const k of ["bed","try_","wake","up"]) if (v[k] == null && prev[k]) v[k] = prev[k];
+  const body = el("div", {class:"card-body"});
+  const derived = el("div", {class:"derived", "aria-live":"polite"});
+  const err = el("div", {class:"err-text"});
+  const upd = () => {
+    const d = sleepDerived(v);
+    derived.replaceChildren(
+      el("span", {}, "寝床にいた時間 ", el("b",{text:d.tib != null ? `${d.tib}分` : "—"})),
+      el("span", {}, "眠っていた時間 ", el("b",{text:d.tst != null ? `${d.tst}分` : "—"})),
+      el("span", {}, "睡眠効率 ", el("b",{text:d.se != null ? `${d.se}%` : "—"})));
+    err.textContent = d.tst != null && d.tst < 0 ? "眠っていた時間がマイナスになります。寝つくまで・途中で起きていた時間を確かめてください。" : "";
+  };
+  const set = k => x => { v[k] = x; upd(); };
+  body.append(el("div", {class:"row"},
+    timeField("bed-"+date, "寝床に入った時刻", v.bed, set("bed")),
+    timeField("try-"+date, "眠ろうとした時刻", v.try_, set("try_"))));
+  body.append(el("div", {class:"row"},
+    numField("sol-"+date, "寝つくまで", v.sol, "分", set("sol"), {primary:prim.key === "sol"}),
+    numField("waso-"+date, "途中で起きていた合計", v.waso, "分", set("waso"), {primary:prim.key === "waso"})));
+  body.append(el("div", {class:"row"},
+    timeField("wake-"+date, "最後に目が覚めた時刻", v.wake, set("wake")),
+    timeField("up-"+date, "寝床から出た時刻", v.up, set("up"))));
+  body.append(derived, err);
+
+  const ratings = [{k:"sleep", label:"睡眠の質", ends:["とても悪い","とても良い"]}];
+  if (prim.key === "outcome" && prim.timing === "night") ratings.push({k:"outcome", label:prim.label, ends:prim.better < 0 ? ["まったくない","とても強い"] : ["とても悪い","とても良い"]});
+  const order = shuffled(ratings.map(r => r.k), date + "n");
+  v.order = order.join(">");
+  for (const k of order) { const r = ratings.find(x => x.k === k); body.append(scaleField(`${k}-n-${date}`, r.label, v[k], x => v[k] = x, r.ends, prim.key === k)); }
+
+  if (c.wear) body.append(el("div", {class:"row"},
+    numField("rhr-"+date, "睡眠中の心拍数", v.rhr, "拍/分", set("rhr"), {step:0.1, primary:prim.key === "rhr", hint:"機器の値"}),
+    numField("rmssd-"+date, "心拍変動 RMSSD", v.rmssd, "ミリ秒", set("rmssd"), {step:0.1, primary:prim.key === "rmssd", hint:"機器の値"})));
+  upd();
+  return el("section", {class:"card"},
+    el("div", {class:"card-head"}, el("h2", {text:`${md(date)}の夜の睡眠`}), el("span", {class:"when", text:"翌朝、起きてから1時間以内に"})),
+    body, saveBar(() => writePart(date, "night", clean(v)), days[date]?.night && days[date].updatedAt));
+}
+function clean(o) { const r = {}; for (const [k, x] of Object.entries(o)) r[k] = x === undefined ? null : x; return r; }
+
+/* ---------- 各タブ ---------- */
+function renderToday() {
+  if (!config) return renderNoConfig();
+  const t = today(), y = addDays(t, -1), info = dayInfo(t), yInfo = dayInfo(y);
+  const out = [];
+  if (info.kind === "before") {
+    const w = washoutDays(config);
+    out.push(el("div", {class:"notice"}, `普段どおりの記録は ${md(config.startDate)} から始まります。`, w ? el("span", {}, ` ${config.item}をいま飲んでいるなら、${md(addDays(config.startDate, -w))}から飲むのをやめてください（体から抜けるまでの目安：${w}日）。`) : ""));
+    return out;
+  }
+  if (info.kind === "base" && info.n === 1) out.push(el("div", {class:"notice", text:"最初の7日は、飲まずにいつもどおり過ごして記録します。この記録から、あなたの毎日の揺れ方を測り、必要な日数を見積もります。"}));
+  const hour = new Date().getHours();
+  const cards = [];
+  if (yInfo.kind !== "before" && yInfo.kind !== "none" && yInfo.kind !== "after") cards.push(nightCard(y));
+  if (info.kind !== "after") cards.push(dayCard(t));
+  if (hour >= 15) cards.reverse();
+  out.push(...cards);
+  if (info.kind === "after" && yInfo.kind === "after") out.push(el("div", {class:"notice", text:"実験の期間は終わりました。「書き出し」から記録を取り出して分析します。"}));
+  return out;
+}
+function renderNoConfig() {
+  return [el("div", {class:"notice"}, "まだ実験の設定がありません。",
+    el("button", {class:"ghost", type:"button", style:"margin-left:8px", text:"設定する", onclick:() => go("setup")}))];
+}
+
+function renderDays() {
+  if (!config) return renderNoConfig();
+  const s = schedule(config);
+  const out = [];
+  if (config.blinded) out.push(el("div", {class:"notice", text:"中身を隠す実験なので、どの日が本物かは表示しません。協力者だけが知っています。"}));
+  else {
+    out.push(el("div", {class:"blockbar", "aria-label":"実験の並び"}, el("span", {class:"base", text:"普段 7日"}), ...config.sequence.split("").map(p => el("span", {class:p === "H" ? "B" : p, text:`${PHASE_WORD[p]} 7日`}))));
+    out.push(el("div", {class:"legend"}, el("span", {text:"上の線：橙=飲む日・青灰=飲まない日・点線=普段の記録"}), el("span", {text:"丸：左=日中・右=夜の睡眠"})));
+  }
+  const cal = el("div", {class:"cal"});
+  WD.forEach(w => cal.append(el("div", {class:"wk", text:w})));
+  const first = parse(s.start).getDay();
+  for (let i = 0; i < first; i++) cal.append(el("div", {class:"cell blank", "aria-hidden":"true"}));
+  const total = BASELINE_DAYS + s.expDays;
+  for (let i = 0; i < total; i++) {
+    const d = addDays(s.start, i), inf = dayInfo(d), rec = days[d] || {};
+    const cls = ["cell", inf.kind === "base" ? "base" : config.blinded ? "" : inf.phase === "A" ? "rest" : "dose", d === today() ? "today" : ""].join(" ");
+    const b = el("button", {type:"button", class:cls, "aria-current":String(d === selected), "aria-label":`${md(d)} ${inf.kind === "base" ? "普段" : config.blinded ? "実験" : PHASE_WORD[inf.phase] + "日"}`, onclick:() => { selected = d; render(); }},
+      el("span", {class:"d", text:String(parse(d).getDate())}),
+      el("span", {class:"marks"}, el("span", {class:"m" + (rec.day ? " on" : "")}), el("span", {class:"m" + (rec.night ? " on" : "")})));
+    cal.append(b);
+  }
+  out.push(cal);
+  const doneDay = Object.values(days).filter(r => r.day).length, doneNight = Object.values(days).filter(r => r.night).length;
+  out.push(el("div", {class:"notice"}, `日中 ${doneDay}日・夜 ${doneNight}日 記録済み（全${total}日）。日付を押すと、その日を直せます。`));
+  if (selected && dayInfo(selected).kind !== "before" && diffDays(selected, today()) <= 0) {
+    out.push(dayCard(selected));
+    if (diffDays(selected, today()) < 0) out.push(nightCard(selected));
+  }
+  return out;
+}
+
+function renderSetup() {
+  const c = {...(config || {
+    item:"", substance:"magnesium", doseTime:"21:00", primary:"sol", customLabel:"", customTiming:"day", customLower:false,
+    wear:false, cycle:false, dose:false, blinded:false, cycleLength:28, lastPeriod:"", bedtime:"23:00", waketime:"07:00", startDate:addDays(today(), 1),
+  })};
+  const locked = config && dayInfo(today()).kind !== "before" && dayInfo(today()).kind !== "none";
+  const out = [];
+  if (locked) out.push(el("div", {class:"notice warn"}, el("b", {text:"実験が始まっているので、並びと開始日は変えられません。"}), " 途中で変えると、飲む期間と飲まない期間の比べ方が崩れるためです。"));
+
+  const body = el("div", {class:"card-body"});
+  const suitBox = el("div");
+  const showSuit = () => {
+    const s = suitability(c);
+    const w = washoutDays(c);
+    suitBox.replaceChildren(el("div", {class:"notice " + (s.level === "bad" ? "bad" : s.level === "warn" ? "warn" : "")}, s.text, w ? ` 始める前に飲まない日数の目安：${w}日。` : ""));
+  };
+  const customBox = el("div", {class:"row"},
+    numField("cth", "半減期", c.customTh, "時間", x => { c.customTh = x; showSuit(); }, {step:0.1, hint:"出典を確かめた値"}),
+    numField("ctm", "最も濃くなるまで", c.customTmax, "時間", x => c.customTmax = x, {step:0.1}));
+  customBox.hidden = c.substance !== "custom";
+  const subSel = el("select", {id:"substance", disabled:locked, onchange:e => { c.substance = e.target.value; customBox.hidden = c.substance !== "custom"; showSuit(); }},
+    ...Object.entries(SUBSTANCES).map(([k, s]) => { const o = el("option", {value:k, text:s.name}); o.selected = k === c.substance; return o; }));
+
+  body.append(el("div", {class:"field"}, el("label", {for:"item", text:"試すもの（商品名や飲み方）"}), el("input", {type:"text", id:"item", placeholder:"例：マグネシウム（就寝前1錠）", value:c.item, oninput:e => c.item = e.target.value})));
+  body.append(el("div", {class:"field"}, el("label", {for:"substance", text:"成分（体内での動き方の計算に使う）"}), subSel), customBox, suitBox);
+  body.append(el("div", {class:"row"}, timeField("doseTime", "飲む時刻", c.doseTime, x => c.doseTime = x), el("div")));
+
+  const primSel = el("select", {id:"primary", disabled:locked, onchange:e => { c.primary = e.target.value; customP.hidden = c.primary !== "outcome"; }},
+    ...Object.entries(OUTCOMES).map(([k, o]) => { const op = el("option", {value:k, text:`${o.label}${o.unit && !o.custom ? `（${o.unit}）` : ""}${o.wear ? "・機器が必要" : ""}`}); op.selected = k === c.primary; return op; }));
+  const customP = el("div", {class:"card-body", style:"padding:0;gap:12px"},
+    el("div", {class:"field"}, el("label", {for:"clabel", text:"項目の名前（0〜10で答える）"}), el("input", {type:"text", id:"clabel", placeholder:"例：朝のだるさ", value:c.customLabel, oninput:e => c.customLabel = e.target.value})),
+    el("div", {class:"toggles"},
+      el("label", {class:"tog", for:"ctday"}, (() => { const i = el("input", {type:"radio", name:"ct", id:"ctday", onchange:() => c.customTiming = "day"}); i.checked = c.customTiming !== "night"; return i; })(), "日中のこと（寝る前に記入）"),
+      el("label", {class:"tog", for:"ctnight"}, (() => { const i = el("input", {type:"radio", name:"ct", id:"ctnight", onchange:() => c.customTiming = "night"}); i.checked = c.customTiming === "night"; return i; })(), "夜〜朝のこと（翌朝に記入）"),
+      checkTog("clower", "低いほど良い（だるさなど）", c.customLower, x => c.customLower = x)));
+  customP.hidden = c.primary !== "outcome";
+  body.append(el("div", {class:"field"}, el("label", {for:"primary"}, "主要項目（判定に使う1つ）", el("span", {class:"hint", text:"実験の途中で変えない"})), primSel), customP);
+
+  body.append(el("div", {class:"toggles"}, checkTog("wear", "指輪型・腕時計型の機器で睡眠中の心拍を測っている", c.wear, x => c.wear = x)));
+  const cycBox = el("div", {class:"row"},
+    numField("clen", "周期の長さ（ふだん）", c.cycleLength, "日", x => c.cycleLength = x),
+    el("div", {class:"field"}, el("label", {for:"lastp", text:"直近の月経初日"}), el("input", {type:"date", id:"lastp", value:c.lastPeriod || "", oninput:e => c.lastPeriod = e.target.value})));
+  cycBox.hidden = !c.cycle;
+  body.append(el("div", {class:"field"},
+    el("div", {class:"toggles"}, (() => { const t = checkTog("cycle", "月経周期を記録する", c.cycle, x => { c.cycle = x; cycBox.hidden = !x; }); if (locked) t.querySelector("input").disabled = true; return t; })()),
+    el("div", {class:"hint", text:"記録する場合は56日（7日×8期間）の並びになります。28日の並びは、周期の時期と飲む期間がほぼ重なり、区別できないためです。"})), cycBox);
+  body.append(el("div", {class:"field"},
+    el("div", {class:"toggles"},
+      (() => { const t = checkTog("dosel", "量の違いも見る（半分の量の期間を入れる・42日）", c.dose, x => c.dose = x); if (locked) t.querySelector("input").disabled = true; return t; })(),
+      (() => { const t = checkTog("blind", "中身を隠す（協力者が本物と空のカプセルを入れ替える）", c.blinded, x => c.blinded = x); if (locked) t.querySelector("input").disabled = true; return t; })()),
+    el("div", {class:"hint", text:"量の違いを見ると、量が増えると頭打ちになるかが分かります（月経周期を記録する場合は56日の並びを優先します）。中身を隠すと、期待による記録の動きを取り除けます。"})));
+  body.append(el("div", {class:"row"}, timeField("bedtime", "ふだん寝る時刻", c.bedtime, x => c.bedtime = x), timeField("waketime", "ふだん起きる時刻", c.waketime, x => c.waketime = x)));
+  body.append(el("div", {class:"field"}, el("label", {for:"start", text:"普段どおりの記録を始める日（ここから7日間は飲まない）"}), el("input", {type:"date", id:"start", value:c.startDate, disabled:locked, oninput:e => c.startDate = e.target.value})));
+  body.append(el("div", {class:"notice"}, "次に当てはまる場合は、この実験をしないでください：服薬中・通院中、妊娠中・授乳中、医薬品成分を含むもの、指定成分（コレウス・フォルスコリー、ドオウレン、プエラリア・ミリフィカ、ブラックコホシュ）を含むもの。"));
+  showSuit();
+
+  const msg = el("span", {class:"saved"});
+  const btn = el("button", {class:"primary", type:"button", disabled:!db || !canWrite, text:config ? "設定を保存する" : "この設定で始める"});
+  btn.addEventListener("click", async () => {
+    if (!c.item.trim()) { msg.className = "saved err"; msg.textContent = "試すものの名前を入れてください"; return; }
+    if (c.substance === "custom" && !Number(c.customTh)) { msg.className = "saved err"; msg.textContent = "半減期を入れてください"; return; }
+    if (OUTCOMES[c.primary]?.wear && !c.wear) { msg.className = "saved err"; msg.textContent = "この主要項目には機器の記録が必要です"; return; }
+    if (c.primary === "outcome" && !c.customLabel.trim()) { msg.className = "saved err"; msg.textContent = "主要項目の名前を入れてください"; return; }
+    const kind = c.cycle ? "cycle" : c.dose ? "dose" : "short";
+    if (!locked && (!c.sequence || !SEQS[kind].includes(c.sequence))) {
+      const r = new Uint32Array(1); crypto.getRandomValues(r);
+      c.sequence = SEQS[kind][r[0] % 2];
+    }
+    btn.disabled = true; msg.className = "saved"; msg.textContent = "保存しています";
+    try { await db.doc("config/main").set(clean({...c, updatedAt:Date.now()})); msg.className = "saved ok"; msg.textContent = "保存しました"; }
+    catch (e) { msg.className = "saved err"; msg.textContent = saveError(e); }
+    finally { btn.disabled = !db || !canWrite; }
+  });
+  out.push(el("section", {class:"card"}, el("div", {class:"card-head"}, el("h2", {text:"実験の設定"}), el("span", {class:"when", text:"始める前に1回"})), body, el("div", {class:"card-foot"}, msg, btn)));
+
+  if (config) {
+    const s = schedule(config);
+    out.push(el("section", {class:"card"}, el("div", {class:"card-head"}, el("h2", {text:"日程"})),
+      el("div", {class:"card-body"}, el("dl", {class:"kv"},
+        el("dt", {text:"普段の記録"}), el("dd", {text:`${md(s.start)} 〜 ${md(addDays(s.expStart, -1))}`}),
+        el("dt", {text:"実験"}), el("dd", {text:`${md(s.expStart)} 〜 ${md(s.end)}（${s.expDays}日）`}),
+        el("dt", {text:"並び"}), el("dd", {class:"mono", text:config.blinded ? "協力者だけが知っています" : config.sequence + "（7日ずつ。A=飲まない・B=飲む・H=半分の量）"})))));
+    if (config.blinded) {
+      const sheet = el("div", {class:"card-body"});
+      sheet.hidden = true;
+      const rows = [];
+      for (let k = 1; k <= s.expDays; k++) { const d = addDays(s.expStart, k - 1), ph = config.sequence[Math.floor((k - 1) / BLOCK)]; rows.push(el("tr", {}, el("td", {class:"num", text:md(d)}), el("td", {text:ph === "A" ? "空のカプセル" : ph === "H" ? "半分の量のカプセル" : "本物のカプセル"}))); }
+      sheet.append(el("div", {class:"tw"}, el("table", {}, el("thead", {}, el("tr", {}, el("th", {text:"日"}), el("th", {text:"渡すもの"}))), el("tbody", {}, ...rows))));
+      out.push(el("section", {class:"card"}, el("div", {class:"card-head"}, el("h2", {text:"協力者用の割り付け表"}), el("span", {class:"when", text:"本人は見ない"})),
+        el("div", {class:"card-body"}, el("p", {style:"margin:0;font-size:14px;color:var(--muted)", text:"協力者に画面を渡してから開いてください。協力者は毎日、表のとおりに本物か空のカプセルを用意します。見た目と味が同じカプセルを使います。"})),
+        sheet, el("div", {class:"card-foot"}, el("span", {class:"saved", text:"本人が見ると、期待を取り除けなくなります"}), el("button", {class:"ghost", type:"button", text:"協力者として表を開く", onclick:e => { sheet.hidden = !sheet.hidden; e.target.textContent = sheet.hidden ? "協力者として表を開く" : "表を閉じる"; }}))));
+    }
+    const conf = el("input", {type:"text", id:"resetConfirm", placeholder:"やり直す"});
+    const rmsg = el("span", {class:"saved"});
+    out.push(el("section", {class:"card"}, el("div", {class:"card-head"}, el("h2", {text:"最初からやり直す"})),
+      el("div", {class:"card-body"}, el("p", {style:"margin:0;font-size:14px;color:var(--muted)", text:"設定を消して、並びを引き直します。これまでの記録は残ります。続けるには下の欄に「やり直す」と入れてください。"}), conf),
+      el("div", {class:"card-foot"}, rmsg, el("button", {class:"ghost", type:"button", text:"設定を消す", onclick:async () => {
+        if (conf.value.trim() !== "やり直す") { rmsg.className = "saved err"; rmsg.textContent = "「やり直す」と入れてください"; return; }
+        try { await db.doc("config/main").delete(); rmsg.className = "saved ok"; rmsg.textContent = "設定を消しました"; } catch (e) { rmsg.className = "saved err"; rmsg.textContent = saveError(e); }
+      }}))));
+  }
+  return out;
+}
+
+/* ---------- 書き出し（分析エンジンの CSV 形式） ---------- */
+const COLS = ["day","date","phase","outcome","sol","waso","tst","tib","se","sleep","rhr","rmssd","mood","stress","alcohol","coffee","offday","sick","cycle_day","taken","amount","dose_hour","belief","rating_order","qa","qb","pair_order"];
+function cycleDay(date) {
+  const starts = Object.entries(days).filter(([, r]) => r.day?.period_start).map(([d]) => d);
+  if (config.lastPeriod) starts.push(config.lastPeriod);
+  const past = starts.filter(d => diffDays(date, d) >= 0).sort();
+  return past.length ? diffDays(date, past[past.length - 1]) + 1 : null;
+}
+function rowFor(date, dayNo, phase) {
+  const r = days[date] || {}, dd = r.day || {}, nn = r.night || {}, dv = sleepDerived(nn);
+  const prim = primaryOf(config);
+  const outcome = prim.key === "outcome" ? (prim.timing === "night" ? nn.outcome : dd.outcome) : null;
+  const b = x => x == null ? null : (x ? 1 : 0);
+  return {day:dayNo, date, phase, outcome, sol:nn.sol, waso:nn.waso, tst:dv.tst, tib:dv.tib, se:dv.se, sleep:nn.sleep, rhr:nn.rhr, rmssd:nn.rmssd,
+    mood:dd.mood, stress:dd.stress, alcohol:r.day ? (dd.alcohol ?? 0) : null, coffee:r.day && config.substance !== "caffeine" ? (dd.coffee ?? 0) : null,
+    offday:r.day ? b(dd.offday) : null, sick:r.day ? b(dd.sick) : null, cycle_day:config.cycle ? cycleDay(date) : null,
+    taken:phase !== "A" && r.day ? b(dd.taken) : null, amount:phase === "H" ? 0.5 : phase === "B" ? 1 : null,
+    dose_hour:phase !== "A" && dd.taken && dd.dose ? Math.round(toHours(dd.dose)*100)/100 : null,
+    belief:config.blinded && dd.belief_set ? dd.belief : null,
+    rating_order:[dd.order, nn.order].filter(Boolean).join("|"), qa:dd.qa, qb:dd.qb, pair_order:r.day && dd.qa != null && dd.qb != null ? dd.pair_order : null};
+}
+function toCsv(rows) {
+  const esc = x => x == null ? "" : /[",\n]/.test(String(x)) ? `"${String(x).replace(/"/g, '""')}"` : String(x);
+  return [COLS.join(","), ...rows.map(r => COLS.map(c => esc(r[c])).join(","))].join("\n") + "\n";
+}
+function hasAny(date) { const r = days[date]; return !!(r && (r.day || r.night)); }
+function buildCsvs() {
+  const s = schedule(config);
+  const base = [], exp = [];
+  for (let i = 0; i < BASELINE_DAYS; i++) { const d = addDays(s.start, i); if (hasAny(d)) base.push(rowFor(d, i+1, "A")); }
+  for (let k = 1; k <= s.expDays; k++) { const d = addDays(s.expStart, k-1); if (hasAny(d)) exp.push(rowFor(d, k, config.sequence[Math.floor((k-1)/BLOCK)])); }
+  return {base, exp};
+}
+function command() {
+  const c = config, prim = primaryOf(c), parts = ["python -m n1engine.run analyze 実験の記録.csv", `--item "${c.item}"`, `--outcome ${prim.key}`];
+  if (prim.key === "outcome") { parts.push(`--outcome-label "${prim.label}"`, `--timing ${prim.timing}`); if (prim.better < 0) parts.push("--lower-is-better"); }
+  if (c.substance === "custom") { parts.push(`--half-life ${c.customTh}`); if (c.customTmax) parts.push(`--tmax ${c.customTmax}`); }
+  else if (c.substance !== "none") parts.push(`--substance ${c.substance}`);
+  const dh = toHours(c.doseTime); if (dh != null) parts.push(`--dose-hour ${Math.round(dh*100)/100}`);
+  const bt = toHours(c.bedtime), wt = toHours(c.waketime);
+  if (bt != null) parts.push(`--bedtime ${bt}`); if (wt != null) parts.push(`--waketime ${wt}`);
+  if (c.cycle) parts.push(`--cycle-length ${c.cycleLength || 28}`);
+  if (c.blinded) parts.push("--blinded");
+  return parts.join(" \\\n  ") + " \\\n  --out レポート.md";
+}
+function planCommand() {
+  const c = config, prim = primaryOf(c), parts = ["python -m n1engine.run plan 普段の記録.csv", `--outcome ${prim.key}`, `--timing ${prim.timing}`];
+  if (c.substance === "custom") parts.push(`--half-life ${c.customTh}`); else if (c.substance !== "none") parts.push(`--substance ${c.substance}`);
+  const dh = toHours(c.doseTime); if (dh != null) parts.push(`--dose-hour ${Math.round(dh*100)/100}`);
+  return parts.join(" \\\n  ");
+}
+function renderExport() {
+  if (!config) return renderNoConfig();
+  if (config.blinded && dayInfo(today()).kind !== "after") return [el("div", {class:"notice warn", text:"中身を隠す実験は、実験の期間が終わってから書き出します。途中で書き出すと、どの日が本物だったかが見えてしまいます。"})];
+  const {base, exp} = buildCsvs();
+  const out = [];
+  const item = (title, meta, filename, rows) => {
+    const msg = el("span", {class:"saved"});
+    const btn = el("button", {class:"primary", type:"button", disabled:!rows.length, text:"保存する"});
+    const area = el("textarea", {class:"csv", readonly:true, id:"csv-"+filename, "aria-label":filename}, toCsv(rows));
+    area.hidden = true;
+    btn.addEventListener("click", async () => {
+      if (!downloads) { area.hidden = false; area.select(); msg.textContent = "この表示ではファイルに保存できません。下の文字をコピーしてください"; return; }
+      try { await downloads.save({filename, data:toCsv(rows)}); msg.className = "saved ok"; msg.textContent = "保存しました"; }
+      catch (e) { if (e?.code !== "declined") { area.hidden = false; msg.className = "saved err"; msg.textContent = "保存できませんでした。下の文字をコピーしてください"; } }
+    });
+    return el("div", {class:"dlrow"}, el("div", {}, el("h3", {text:title}), el("div", {class:"meta", text:meta})), btn, msg, area);
+  };
+  out.push(el("section", {class:"card"}, el("div", {class:"card-head"}, el("h2", {text:"記録を取り出す"}), el("span", {class:"when", text:"分析エンジンの形式（CSV）"})),
+    el("div", {class:"card-body dl"},
+      item("普段の記録", `${base.length} / ${BASELINE_DAYS}日。必要な日数の見積もりに使う`, "普段の記録.csv", base),
+      item("実験の記録", `${exp.length} / ${schedule(config).expDays}日。判定に使う`, "実験の記録.csv", exp))));
+  out.push(el("section", {class:"card"}, el("div", {class:"card-head"}, el("h2", {text:"分析の仕方"})),
+    el("div", {class:"card-body"},
+      el("p", {style:"margin:0;font-size:14px", text:"Claude に「1人実験ノートの記録を分析して」と頼むと、この記録を読んで分析エンジンにかけ、レポートの下書きを作ります。自分で動かす場合は、self-experiment/engine で次を実行します。"}),
+      el("h3", {text:"普段の記録がそろったら（必要な日数の見積もり）"}), el("pre", {class:"cmd", text:planCommand()}),
+      el("h3", {text:"実験が終わったら（判定とレポート）"}), el("pre", {class:"cmd", text:command()}))));
+  return out;
+}
+
+/* ---------- 描画 ---------- */
+function go(t) { tab = t; render(); window.scrollTo(0, 0); }
+function render() {
+  renderTop();
+  document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  const out = [];
+  if (!db) out.push(el("div", {class:"notice warn", text:"この表示では記録を保存できません。claude.ai で作成者として開いてください。"}));
+  else if (!canWrite) out.push(el("div", {class:"notice warn", text:"閲覧のみの表示です。記録できるのは作成者だけです。"}));
+  if (db && (!configLoaded || !daysLoaded)) out.push(el("div", {class:"notice", text:"記録を読み込んでいます。"}));
+  else if (tab === "today") out.push(...renderToday());
+  else if (tab === "days") out.push(...renderDays());
+  else if (tab === "setup") out.push(...renderSetup());
+  else out.push(...renderExport());
+  view.replaceChildren(...out);
+}
+document.querySelectorAll("nav.tabs button").forEach(b => b.addEventListener("click", () => go(b.dataset.tab)));
+
+/* 入力中に他の端末の保存で書き換わらないよう、描画はタブ切り替えと保存のときだけ */
+let pending = false;
+function refreshSoon() {
+  const active = document.activeElement;
+  if (active && view.contains(active) && /INPUT|TEXTAREA|SELECT/.test(active.tagName)) { pending = true; return; }
+  render();
+}
+view.addEventListener("focusout", () => { if (pending) { pending = false; setTimeout(refreshSoon, 50); } });
+
+async function start() {
+  render();
+  if (!window.claude?.use) { configLoaded = daysLoaded = true; render(); return; }
+  const [d, dl, u] = await Promise.all([claude.use("db"), claude.use("downloads"), claude.use("user")]);
+  db = d; downloads = dl;
+  if (u) { try { canWrite = (await u.isOwner()) !== false; } catch { canWrite = true; } }
+  if (!db) { configLoaded = daysLoaded = true; render(); return; }
+  db.doc("config/main").onSnapshot(s => { config = s.exists ? s.data() : null; configLoaded = true; if (!config && tab === "today" && daysLoaded) tab = "setup"; refreshSoon(); }, () => { configLoaded = true; render(); });
+  db.collection("days").onSnapshot(s => { const m = {}; s.docs.forEach(x => m[x.id] = x.data()); days = m; daysLoaded = true; if (!config && configLoaded && tab === "today") tab = "setup"; refreshSoon(); }, () => { daysLoaded = true; render(); });
+}
+start();
+})();
+</script>

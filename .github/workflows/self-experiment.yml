@@ -1,0 +1,101 @@
+name: self-experiment engine
+
+# self-experiment/engine（1人実験の分析エンジン）の検証。
+#   tests   : pytest（壊れていないか）。Python 3.11 / 3.12
+#   matrix  : 成分の組 × 本当の差の組み合わせを総当たりで検証（scripts/verify_matrix.py）。
+#             答えの分かっている偽の記録を本番と同じ分析にかけ、幅の正しさ・誤報・見つけた割合・
+#             計算の落ち着き・当てはまりがしきい値を満たすかを確かめる
+#   summary : matrix の結果を1枚の表にして、実行結果のページに出す
+# カウンセリングアプリ（Next.js）には触れないので、self-experiment の変更のときだけ動かす。
+
+on:
+  pull_request:
+    paths:
+      - "self-experiment/engine/**"
+      - ".github/workflows/self-experiment.yml"
+  push:
+    branches: [main]
+    paths:
+      - "self-experiment/engine/**"
+      - ".github/workflows/self-experiment.yml"
+  workflow_dispatch:
+    inputs:
+      n:
+        description: "matrix の1セルあたりの偽の記録の件数"
+        default: "30"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: self-experiment/engine
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: self-experiment/engine/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m pytest tests -q
+
+  matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: [caffeine-theanine, caffeine-magnesium, theanine-magnesium, caffeine-halflife24h]
+        scenario: ["null", main, synergy, antagonism]  # null は YAML では空になるので引用符で囲む
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: self-experiment/engine/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: verify ${{ matrix.pair }} / ${{ matrix.scenario }}
+        run: |
+          python scripts/verify_matrix.py \
+            --pair ${{ matrix.pair }} --scenario ${{ matrix.scenario }} \
+            --n ${{ inputs.n || '30' }} --jobs 2 --out result.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: matrix-${{ matrix.pair }}-${{ matrix.scenario }}
+          path: self-experiment/engine/result.json
+          if-no-files-found: ignore
+
+  summary:
+    needs: matrix
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: matrix-*
+          path: self-experiment/engine/results
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: self-experiment/engine/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: 結果の表を作る
+        run: python scripts/matrix_summary.py results >> "$GITHUB_STEP_SUMMARY"
