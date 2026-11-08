@@ -578,3 +578,25 @@ def test_three_factors_run_and_report_vif():
     m = res.primary.multi
     assert len(m["factors"]) == 3 and len(m["interactions"]) == 3
     assert max(m["vif"].values()) > 5
+
+
+def test_parse_extra_accepts_catalog_custom_and_plain_factor():
+    from n1engine.run import parse_extra
+
+    f = parse_extra("theanine:theanine:15")
+    assert f.key == "theanine" and f.substance.key == "theanine" and f.dose_hour == 15.0
+    g = parse_extra("factor2:half=12,tmax=2:21:ハーブ")
+    assert g.label == "ハーブ" and g.substance.pk.t_half_h == 12.0 and g.substance.pk.tmax_h == 2.0
+    h = parse_extra("factor2::21:マグ")
+    assert h.substance is None and h.label == "マグ" and h.dose_hour == 21.0
+    with pytest.raises(SystemExit):
+        parse_extra("x:nosuchsubstance:8")
+
+
+def test_report_does_not_print_negative_zero():
+    from types import SimpleNamespace as N
+
+    from n1engine.report import _diff
+
+    r = N(direction=1, log=False, unit="分", v=N(effect_mean=-0.2, effect_low=-0.4, effect_high=0.3))
+    assert "-0" not in _diff(r)

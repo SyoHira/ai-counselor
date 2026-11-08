@@ -143,8 +143,8 @@ ke = ln2 ÷ 半減期    ka = 最高濃度までの時間 Tmax から逆算
 ```
 
 - 並び：2成分は56日の `make_factorial_schedule`（0=なし／1=Aだけ／2=Bだけ／3=両方を7日ずつ。Williams の方陣の行を前半に置き、後半は逆順にする。どの条件も2期間・14日で、平均位置がそろう＝時間の流れが偏らない）。A と B の曝露量は無相関
-- 記録：`phase`（最初の成分）に加えて、追加の成分ごとに `phase_<名前>` 列（`dose_hour_<名前>`・`taken_<名前>`・`amount_<名前>` も同じ接尾辞）
-- 実行：`python -m n1engine.run analyze 記録.csv --item "カフェイン×テアニン" --outcome sol --substance caffeine --dose-hour 15 --extra theanine:theanine:15`（`--extra 名前[:成分[:時刻]]` は複数回指定できる）
+- 記録：`phase`（最初の成分）に加えて、追加の成分ごとに `phase_<名前>` 列（`dose_hour_<名前>`・`taken_<名前>`・`amount_<名前>` も同じ接尾辞）。記録フォーム（`../form/`）の「2つの成分を掛け合わせて試す」はこの形式で書き出し、分析コマンドも表示する
+- 実行：`python -m n1engine.run analyze 記録.csv --item "カフェイン×テアニン" --outcome sol --substance caffeine --dose-hour 15 --extra theanine:theanine:15`（`--extra 名前[:成分[:時刻[:呼び名]]]` は複数回指定できる。成分は一覧の名前か `half=半減期[,tmax=時間]`、空なら飲んだ日=1）
 - 成分ごとに、体内量・遅れ・形を別々に持つ（`pipeline.Factor`）。遅れ・形は要因ごとにギブスサンプリングの1段で選び直し、上乗せの列はそのとき選ばれた列どうしの積として毎回作り直す（`model.fit(factors=…)`）
 - 結果は「Aだけ」「Bだけ」「一緒に」「上乗せ」の4行。「一緒に」は単独の差の合計に上乗せを足した分布。各行を偶然とも比べる（`null_check(column=…)`）
 - 上乗せの事前分布は、単独の差と同じ幅（±2点程度）。±1点では上乗せを小さく見積もりすぎ、90%の幅の正しさが42〜55%に落ちた（CALIBRATION.md v0.5.0）

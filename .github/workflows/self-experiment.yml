@@ -5,6 +5,7 @@ name: self-experiment engine
 #   matrix  : 成分の組 × 本当の差の組み合わせを総当たりで検証（scripts/verify_matrix.py）。
 #             答えの分かっている偽の記録を本番と同じ分析にかけ、幅の正しさ・誤報・見つけた割合・
 #             計算の落ち着き・当てはまりがしきい値を満たすかを確かめる
+#   form    : 記録フォーム（form/index.html）のスクリプトの構文確認
 #   summary : matrix の結果を1枚の表にして、実行結果のページに出す
 # カウンセリングアプリ（Next.js）には触れないので、self-experiment の変更のときだけ動かす。
 
@@ -12,11 +13,13 @@ on:
   pull_request:
     paths:
       - "self-experiment/engine/**"
+      - "self-experiment/form/**"
       - ".github/workflows/self-experiment.yml"
   push:
     branches: [main]
     paths:
       - "self-experiment/engine/**"
+      - "self-experiment/form/**"
       - ".github/workflows/self-experiment.yml"
   workflow_dispatch:
     inputs:
@@ -52,6 +55,20 @@ jobs:
           cache-dependency-path: self-experiment/engine/requirements.txt
       - run: pip install -r requirements.txt
       - run: python -m pytest tests -q
+
+  form:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: self-experiment/form
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: スクリプトの構文確認
+        run: node check.js
 
   matrix:
     runs-on: ubuntu-latest

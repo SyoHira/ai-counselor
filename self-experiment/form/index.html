@@ -193,8 +193,17 @@ const OUTCOMES = {
   outcome:{label:"自分で決めた項目", unit:"0〜10", timing:null, better:1, custom:true},
 };
 const BASELINE_DAYS = 7, BLOCK = 7;
-const SEQS = {short:["ABBA","BAAB"], cycle:["ABABBABA","BABAABAB"], dose:["AHBBHA","BHAAHB"]};
+/* combo：2成分の56日。0=どちらも飲まない 1=Aだけ 2=Bだけ 3=両方（engine の design.make_factorial_schedule と同じ。
+   Williams の方陣の行＋逆順で、どの条件も14日・平均位置がそろう。A と B の役を入れ替えた2つを足して4通りから引く） */
+const SEQS = {short:["ABBA","BAAB"], cycle:["ABABBABA","BABAABAB"], dose:["AHBBHA","BHAAHB"], combo:["01322310","12033021","02311320","21033012"]};
 const PHASE_WORD = {A:"飲まない", B:"飲む", H:"半分の量"};
+/* 期間の記号 → [1つ目を飲むか, 2つ目を飲むか]。combo 以外は2つ目なし */
+const levelsOf = (c, phase) => c?.combo ? (phase === "A" ? [0,0] : [(+phase) & 1, ((+phase) >> 1) & 1]) : [phase === "A" ? 0 : 1, 0];
+const names2 = c => c.item2 || "2つ目";
+const comboWord = (c, lv, short) => lv[0] && lv[1] ? "両方飲む" : lv[0] ? `${c.item || "1つ目"}だけ飲む` : lv[1] ? `${names2(c)}だけ飲む` : "どちらも飲まない";
+const sub2 = c => ({substance:c.substance2, customTh:c.customTh2, customTmax:c.customTmax2});
+const key2 = c => (c.substance2 && c.substance2 !== "custom" && c.substance2 !== "none") ? c.substance2 : "factor2";
+const hasCaffeine = c => c.substance === "caffeine" || (c.combo && c.substance2 === "caffeine");
 
 /* ---------- 日付 ---------- */
 const pad = n => String(n).padStart(2,"0");
@@ -241,7 +250,7 @@ function dayInfo(date, c = config) {
   if (i < 0) return {kind:"before", until:-i};
   if (i < BASELINE_DAYS) return {kind:"base", n:i+1};
   const k = i - BASELINE_DAYS + 1;
-  if (k <= s.expDays) return {kind:"exp", n:k, phase:c.sequence[Math.floor((k-1)/BLOCK)]};
+  if (k <= s.expDays) { const phase = c.sequence[Math.floor((k-1)/BLOCK)]; return {kind:"exp", n:k, phase, lv:levelsOf(c, phase)}; }
   return {kind:"after"};
 }
 function washoutDays(c) {
@@ -293,7 +302,7 @@ function sleepDerived(n) {
 
 /* ---------- 画面の上部 ---------- */
 function renderTop() {
-  document.getElementById("itemName").textContent = config?.item ? `${config.item}・${md(today())}` : "設定がまだです";
+  document.getElementById("itemName").textContent = config?.item ? `${config.item}${config.combo ? ` × ${names2(config)}` : ""}・${md(today())}` : "設定がまだです";
   const st = document.getElementById("status");
   st.replaceChildren();
   const info = dayInfo(today());
@@ -302,6 +311,7 @@ function renderTop() {
   else if (info.kind === "before") st.append(el("span", {class:"chip off", text:`普段の記録まであと${info.until}日`}));
   else if (info.kind === "base") st.append(el("span", {class:"chip base"}, el("span",{class:"dot"}), "普段どおりの記録"), el("span", {class:"daycount", text:`${info.n} / ${BASELINE_DAYS}日目`}));
   else if (info.kind === "exp" && config.blinded) st.append(el("span", {class:"chip base"}, el("span",{class:"dot"}), "渡されたカプセルを飲む日"), el("span", {class:"daycount", text:`実験 ${info.n} / ${s.expDays}日目`}));
+  else if (info.kind === "exp" && config.combo) st.append(el("span", {class:"chip " + (info.lv[0] || info.lv[1] ? "dose" : "rest")}, el("span",{class:"dot"}), `今日は${comboWord(config, info.lv)}日`), el("span", {class:"daycount", text:`実験 ${info.n} / ${s.expDays}日目`}));
   else if (info.kind === "exp") st.append(info.phase === "A" ? el("span", {class:"chip rest"}, el("span",{class:"dot"}), "今日は飲まない日") : el("span", {class:"chip dose"}, el("span",{class:"dot"}), info.phase === "H" ? "今日は半分の量を飲む日" : "今日は飲む日"), el("span", {class:"daycount", text:`実験 ${info.n} / ${s.expDays}日目`}));
   else st.append(el("span", {class:"chip off", text:"実験は終わりました。書き出しへ"}));
 }
@@ -363,6 +373,22 @@ async function writePart(date, part, obj) {
   if (snap.exists) await ref.update(body); else await ref.set(body);
 }
 
+/* 2成分の実験：飲む日の成分ごとの「飲んだか・飲んだ時刻」。1つ目は taken/dose、2つ目は taken2/dose2 に入れる */
+function doseFields(body, v, c, i, label, date) {
+  const tk = i ? "taken2" : "taken", ds = i ? "dose2" : "dose";
+  if (v[tk] == null) v[tk] = true;
+  if (!v[ds]) v[ds] = i ? c.doseTime2 : c.doseTime;
+  const timeBox = timeField(`dose${i}-${date}`, `${label}を実際に飲んだ時刻`, v[ds], x => v[ds] = x);
+  timeBox.hidden = !v[tk];
+  const seg = el("div", {class:"seg", role:"group", "aria-label":`${label}を飲んだか`});
+  const b1 = el("button", {type:"button", "aria-pressed":String(!!v[tk]), text:"飲んだ"});
+  const b2 = el("button", {type:"button", "aria-pressed":String(!v[tk]), text:"飲み忘れた"});
+  const pick = t => { v[tk] = t; b1.setAttribute("aria-pressed", String(t)); b2.setAttribute("aria-pressed", String(!t)); timeBox.hidden = !t; };
+  b1.onclick = () => pick(true); b2.onclick = () => pick(false);
+  seg.append(b1, b2);
+  body.append(el("div", {class:"field"}, el("div",{class:"lab"}, label), seg), timeBox);
+}
+
 /* その日の日中（寝る前に記入） */
 function dayCard(date) {
   const c = config, info = dayInfo(date), prim = primaryOf(c);
@@ -372,7 +398,11 @@ function dayCard(date) {
   const body = el("div", {class:"card-body"});
 
   const dosing = info.kind === "exp" && (c.blinded || info.phase !== "A");
-  if (dosing) {
+  if (c.combo && info.kind === "exp") {
+    [[c.item || "1つ目", 0], [names2(c), 1]].forEach(([label, i]) => { if (info.lv[i]) doseFields(body, v, c, i, label, date); });
+    if (!info.lv[0] && !info.lv[1]) body.append(el("div", {class:"notice", text:`今日はどちらも飲まない日です。${c.item}も${names2(c)}も飲まずに、いつもどおり過ごしてください。`}));
+    else if (!(info.lv[0] && info.lv[1])) body.append(el("div", {class:"notice", text:`今日は${info.lv[0] ? c.item : names2(c)}だけ飲む日です。もう一方は飲まないでください。`}));
+  } else if (dosing) {
     if (v.taken == null) v.taken = true;
     if (!v.dose) v.dose = c.doseTime;
     const timeBox = timeField("dose-"+date, "実際に飲んだ時刻", v.dose, x => v.dose = x);
@@ -426,7 +456,7 @@ function dayCard(date) {
 
   const life = el("div", {class:"row"});
   life.append(stepper("alcohol-"+date, "飲酒（杯）", v.alcohol, x => v.alcohol = x));
-  if (c.substance !== "caffeine") life.append(stepper("coffee-"+date, "コーヒー・お茶などカフェイン飲料（杯）", v.coffee, x => v.coffee = x));
+  if (!hasCaffeine(c)) life.append(stepper("coffee-"+date, "コーヒー・お茶などカフェイン飲料（杯）", v.coffee, x => v.coffee = x));
   body.append(life);
   const togs = el("div", {class:"toggles"},
     checkTog("off-"+date, "休日だった", v.offday, x => v.offday = x),
@@ -492,8 +522,8 @@ function renderToday() {
   const t = today(), y = addDays(t, -1), info = dayInfo(t), yInfo = dayInfo(y);
   const out = [];
   if (info.kind === "before") {
-    const w = washoutDays(config);
-    out.push(el("div", {class:"notice"}, `普段どおりの記録は ${md(config.startDate)} から始まります。`, w ? el("span", {}, ` ${config.item}をいま飲んでいるなら、${md(addDays(config.startDate, -w))}から飲むのをやめてください（体から抜けるまでの目安：${w}日）。`) : ""));
+    const w = washoutDays(config), w2 = config.combo ? washoutDays(sub2(config)) : null;
+    out.push(el("div", {class:"notice"}, `普段どおりの記録は ${md(config.startDate)} から始まります。`, w ? el("span", {}, ` ${config.item}をいま飲んでいるなら、${md(addDays(config.startDate, -w))}から飲むのをやめてください（体から抜けるまでの目安：${w}日）。`) : "", w2 ? el("span", {}, ` ${names2(config)}をいま飲んでいるなら、${md(addDays(config.startDate, -w2))}から飲むのをやめてください（目安：${w2}日）。`) : ""));
     return out;
   }
   if (info.kind === "base" && info.n === 1) out.push(el("div", {class:"notice", text:"最初の7日は、飲まずにいつもどおり過ごして記録します。この記録から、あなたの毎日の揺れ方を測り、必要な日数を見積もります。"}));
@@ -517,7 +547,7 @@ function renderDays() {
   const out = [];
   if (config.blinded) out.push(el("div", {class:"notice", text:"中身を隠す実験なので、どの日が本物かは表示しません。協力者だけが知っています。"}));
   else {
-    out.push(el("div", {class:"blockbar", "aria-label":"実験の並び"}, el("span", {class:"base", text:"普段 7日"}), ...config.sequence.split("").map(p => el("span", {class:p === "H" ? "B" : p, text:`${PHASE_WORD[p]} 7日`}))));
+    out.push(el("div", {class:"blockbar", "aria-label":"実験の並び"}, el("span", {class:"base", text:"普段 7日"}), ...config.sequence.split("").map(p => config.combo ? el("span", {class:levelsOf(config, p)[0] || levelsOf(config, p)[1] ? "B" : "A", text:`${comboWord(config, levelsOf(config, p))} 7日`}) : el("span", {class:p === "H" ? "B" : p, text:`${PHASE_WORD[p]} 7日`}))));
     out.push(el("div", {class:"legend"}, el("span", {text:"上の線：橙=飲む日・青灰=飲まない日・点線=普段の記録"}), el("span", {text:"丸：左=日中・右=夜の睡眠"})));
   }
   const cal = el("div", {class:"cal"});
@@ -527,8 +557,9 @@ function renderDays() {
   const total = BASELINE_DAYS + s.expDays;
   for (let i = 0; i < total; i++) {
     const d = addDays(s.start, i), inf = dayInfo(d), rec = days[d] || {};
-    const cls = ["cell", inf.kind === "base" ? "base" : config.blinded ? "" : inf.phase === "A" ? "rest" : "dose", d === today() ? "today" : ""].join(" ");
-    const b = el("button", {type:"button", class:cls, "aria-current":String(d === selected), "aria-label":`${md(d)} ${inf.kind === "base" ? "普段" : config.blinded ? "実験" : PHASE_WORD[inf.phase] + "日"}`, onclick:() => { selected = d; render(); }},
+    const none = inf.kind === "exp" && (config.combo ? !inf.lv[0] && !inf.lv[1] : inf.phase === "A");
+    const cls = ["cell", inf.kind === "base" ? "base" : config.blinded ? "" : none ? "rest" : "dose", d === today() ? "today" : ""].join(" ");
+    const b = el("button", {type:"button", class:cls, "aria-current":String(d === selected), "aria-label":`${md(d)} ${inf.kind === "base" ? "普段" : config.blinded ? "実験" : (config.combo ? comboWord(config, inf.lv) : PHASE_WORD[inf.phase]) + "日"}`, onclick:() => { selected = d; render(); }},
       el("span", {class:"d", text:String(parse(d).getDate())}),
       el("span", {class:"marks"}, el("span", {class:"m" + (rec.day ? " on" : "")}), el("span", {class:"m" + (rec.night ? " on" : "")})));
     cal.append(b);
@@ -546,6 +577,7 @@ function renderDays() {
 function renderSetup() {
   const c = {...(config || {
     item:"", substance:"magnesium", doseTime:"21:00", primary:"sol", customLabel:"", customTiming:"day", customLower:false,
+    combo:false, item2:"", substance2:"theanine", doseTime2:"21:00",
     wear:false, cycle:false, dose:false, blinded:false, cycleLength:28, lastPeriod:"", bedtime:"23:00", waketime:"07:00", startDate:addDays(today(), 1),
   })};
   const locked = config && dayInfo(today()).kind !== "before" && dayInfo(today()).kind !== "none";
@@ -557,7 +589,12 @@ function renderSetup() {
   const showSuit = () => {
     const s = suitability(c);
     const w = washoutDays(c);
-    suitBox.replaceChildren(el("div", {class:"notice " + (s.level === "bad" ? "bad" : s.level === "warn" ? "warn" : "")}, s.text, w ? ` 始める前に飲まない日数の目安：${w}日。` : ""));
+    suitBox.replaceChildren(el("div", {class:"notice " + (s.level === "bad" ? "bad" : s.level === "warn" ? "warn" : "")}, c.combo ? `${c.item || "1つ目"}：` : "", s.text, w ? ` 始める前に飲まない日数の目安：${w}日。` : ""));
+  };
+  const suitBox2 = el("div");
+  const showSuit2 = () => {
+    const s2 = suitability(sub2(c)), w2 = washoutDays(sub2(c));
+    suitBox2.replaceChildren(el("div", {class:"notice " + (s2.level === "bad" ? "bad" : s2.level === "warn" ? "warn" : "")}, `${names2(c)}：`, s2.text, w2 ? ` 始める前に飲まない日数の目安：${w2}日。` : ""));
   };
   const customBox = el("div", {class:"row"},
     numField("cth", "半減期", c.customTh, "時間", x => { c.customTh = x; showSuit(); }, {step:0.1, hint:"出典を確かめた値"}),
@@ -569,6 +606,27 @@ function renderSetup() {
   body.append(el("div", {class:"field"}, el("label", {for:"item", text:"試すもの（商品名や飲み方）"}), el("input", {type:"text", id:"item", placeholder:"例：マグネシウム（就寝前1錠）", value:c.item, oninput:e => c.item = e.target.value})));
   body.append(el("div", {class:"field"}, el("label", {for:"substance", text:"成分（体内での動き方の計算に使う）"}), subSel), customBox, suitBox);
   body.append(el("div", {class:"row"}, timeField("doseTime", "飲む時刻", c.doseTime, x => c.doseTime = x), el("div")));
+
+  /* 2つ目の成分（掛け合わせ） */
+  const comboBox = el("div", {class:"card-body", style:"padding:0;gap:12px"});
+  const custom2 = el("div", {class:"row"},
+    numField("cth2", "2つ目の半減期", c.customTh2, "時間", x => { c.customTh2 = x; showSuit2(); }, {step:0.1, hint:"出典を確かめた値"}),
+    numField("ctm2", "最も濃くなるまで", c.customTmax2, "時間", x => c.customTmax2 = x, {step:0.1}));
+  custom2.hidden = c.substance2 !== "custom";
+  const subSel2 = el("select", {id:"substance2", disabled:locked, onchange:e => { c.substance2 = e.target.value; custom2.hidden = c.substance2 !== "custom"; showSuit2(); }},
+    ...Object.entries(SUBSTANCES).map(([k, s_]) => { const o = el("option", {value:k, text:s_.name}); o.selected = k === c.substance2; return o; }));
+  comboBox.append(
+    el("div", {class:"field"}, el("label", {for:"item2", text:"2つ目に試すもの（商品名や飲み方）"}), el("input", {type:"text", id:"item2", placeholder:"例：L-テアニン（午後3時に1錠）", value:c.item2, oninput:e => { c.item2 = e.target.value; showSuit2(); }})),
+    el("div", {class:"field"}, el("label", {for:"substance2", text:"2つ目の成分"}), subSel2), custom2, suitBox2,
+    el("div", {class:"row"}, timeField("doseTime2", "2つ目を飲む時刻", c.doseTime2, x => c.doseTime2 = x), el("div")),
+    el("div", {class:"hint", text:"56日（7日×8期間）で、どちらも飲まない・1つ目だけ・2つ目だけ・両方を、7日ずつ2回試します。結果は、それぞれ単独の差と、両方飲んだときの上乗せ（足し算からのずれ）に分けて出ます。上乗せは単独の差より見つけにくく、本当に2点の上乗せがあっても見つかるのは約3回に2回です。月経周期の記録・量の違い・中身を隠す実験とは同時にできません。"}));
+  comboBox.hidden = !c.combo;
+  const comboTog = (() => { const t = checkTog("combo", "2つの成分を掛け合わせて試す（単独と両方）", c.combo, x => {
+    c.combo = x; comboBox.hidden = !x;
+    for (const id of ["cycle", "dosel", "blind"]) { const i = document.getElementById(id); if (i) { if (x) { i.checked = false; i.dispatchEvent(new Event("change")); } i.disabled = x || (locked && id !== "combo"); } }
+    showSuit();
+  }); if (locked) t.querySelector("input").disabled = true; return t; })();
+  body.append(el("div", {class:"toggles"}, comboTog), comboBox);
 
   const primSel = el("select", {id:"primary", disabled:locked, onchange:e => { c.primary = e.target.value; customP.hidden = c.primary !== "outcome"; }},
     ...Object.entries(OUTCOMES).map(([k, o]) => { const op = el("option", {value:k, text:`${o.label}${o.unit && !o.custom ? `（${o.unit}）` : ""}${o.wear ? "・機器が必要" : ""}`}); op.selected = k === c.primary; return op; }));
@@ -597,7 +655,8 @@ function renderSetup() {
   body.append(el("div", {class:"row"}, timeField("bedtime", "ふだん寝る時刻", c.bedtime, x => c.bedtime = x), timeField("waketime", "ふだん起きる時刻", c.waketime, x => c.waketime = x)));
   body.append(el("div", {class:"field"}, el("label", {for:"start", text:"普段どおりの記録を始める日（ここから7日間は飲まない）"}), el("input", {type:"date", id:"start", value:c.startDate, disabled:locked, oninput:e => c.startDate = e.target.value})));
   body.append(el("div", {class:"notice"}, "次に当てはまる場合は、この実験をしないでください：服薬中・通院中、妊娠中・授乳中、医薬品成分を含むもの、指定成分（コレウス・フォルスコリー、ドオウレン、プエラリア・ミリフィカ、ブラックコホシュ）を含むもの。"));
-  showSuit();
+  showSuit(); showSuit2();
+  if (c.combo) for (const id of ["cycle", "dosel", "blind"]) { const i = body.querySelector("#" + id); if (i) i.disabled = true; }
 
   const msg = el("span", {class:"saved"});
   const btn = el("button", {class:"primary", type:"button", disabled:!db || !canWrite, text:config ? "設定を保存する" : "この設定で始める"});
@@ -606,10 +665,16 @@ function renderSetup() {
     if (c.substance === "custom" && !Number(c.customTh)) { msg.className = "saved err"; msg.textContent = "半減期を入れてください"; return; }
     if (OUTCOMES[c.primary]?.wear && !c.wear) { msg.className = "saved err"; msg.textContent = "この主要項目には機器の記録が必要です"; return; }
     if (c.primary === "outcome" && !c.customLabel.trim()) { msg.className = "saved err"; msg.textContent = "主要項目の名前を入れてください"; return; }
-    const kind = c.cycle ? "cycle" : c.dose ? "dose" : "short";
+    if (c.combo) {
+      if (!(c.item2 || "").trim()) { msg.className = "saved err"; msg.textContent = "2つ目に試すものの名前を入れてください"; return; }
+      if (c.substance2 === "custom" && !Number(c.customTh2)) { msg.className = "saved err"; msg.textContent = "2つ目の半減期を入れてください"; return; }
+      if (c.substance2 === c.substance && c.substance !== "custom" && c.substance !== "none") { msg.className = "saved err"; msg.textContent = "1つ目と2つ目に同じ成分は選べません"; return; }
+      if (c.cycle || c.dose || c.blinded) { msg.className = "saved err"; msg.textContent = "掛け合わせは、月経周期の記録・量の違い・中身を隠す実験と同時にできません"; return; }
+    }
+    const kind = c.combo ? "combo" : c.cycle ? "cycle" : c.dose ? "dose" : "short";
     if (!locked && (!c.sequence || !SEQS[kind].includes(c.sequence))) {
       const r = new Uint32Array(1); crypto.getRandomValues(r);
-      c.sequence = SEQS[kind][r[0] % 2];
+      c.sequence = SEQS[kind][r[0] % SEQS[kind].length];
     }
     btn.disabled = true; msg.className = "saved"; msg.textContent = "保存しています";
     try { await db.doc("config/main").set(clean({...c, updatedAt:Date.now()})); msg.className = "saved ok"; msg.textContent = "保存しました"; }
@@ -624,7 +689,7 @@ function renderSetup() {
       el("div", {class:"card-body"}, el("dl", {class:"kv"},
         el("dt", {text:"普段の記録"}), el("dd", {text:`${md(s.start)} 〜 ${md(addDays(s.expStart, -1))}`}),
         el("dt", {text:"実験"}), el("dd", {text:`${md(s.expStart)} 〜 ${md(s.end)}（${s.expDays}日）`}),
-        el("dt", {text:"並び"}), el("dd", {class:"mono", text:config.blinded ? "協力者だけが知っています" : config.sequence + "（7日ずつ。A=飲まない・B=飲む・H=半分の量）"})))));
+        el("dt", {text:"並び"}), el("dd", {class:"mono", text:config.blinded ? "協力者だけが知っています" : config.combo ? config.sequence + `（7日ずつ。0=どちらも飲まない・1=${config.item}だけ・2=${names2(config)}だけ・3=両方）` : config.sequence + "（7日ずつ。A=飲まない・B=飲む・H=半分の量）"})))));
     if (config.blinded) {
       const sheet = el("div", {class:"card-body"});
       sheet.hidden = true;
@@ -648,7 +713,9 @@ function renderSetup() {
 }
 
 /* ---------- 書き出し（分析エンジンの CSV 形式） ---------- */
-const COLS = ["day","date","phase","outcome","sol","waso","tst","tib","se","sleep","rhr","rmssd","mood","stress","alcohol","coffee","offday","sick","cycle_day","taken","amount","dose_hour","belief","rating_order","qa","qb","pair_order"];
+const COLS_BASE = ["day","date","phase","outcome","sol","waso","tst","tib","se","sleep","rhr","rmssd","mood","stress","alcohol","coffee","offday","sick","cycle_day","taken","amount","dose_hour","belief","rating_order","qa","qb","pair_order"];
+/* 2成分の実験は、2つ目の成分の列（phase_<名前>・taken_<名前>・dose_hour_<名前>）を足す。engine は同じ接尾辞で読む */
+const cols = () => config?.combo ? [...COLS_BASE.slice(0, 3), `phase_${key2(config)}`, ...COLS_BASE.slice(3), `taken_${key2(config)}`, `dose_hour_${key2(config)}`] : COLS_BASE;
 function cycleDay(date) {
   const starts = Object.entries(days).filter(([, r]) => r.day?.period_start).map(([d]) => d);
   if (config.lastPeriod) starts.push(config.lastPeriod);
@@ -658,19 +725,29 @@ function cycleDay(date) {
 function rowFor(date, dayNo, phase) {
   const r = days[date] || {}, dd = r.day || {}, nn = r.night || {}, dv = sleepDerived(nn);
   const prim = primaryOf(config);
+  const combo = !!config.combo, lv = levelsOf(config, phase);
+  const take1 = combo ? lv[0] === 1 : phase !== "A";  // 1つ目を飲む日
   const outcome = prim.key === "outcome" ? (prim.timing === "night" ? nn.outcome : dd.outcome) : null;
   const b = x => x == null ? null : (x ? 1 : 0);
-  return {day:dayNo, date, phase, outcome, sol:nn.sol, waso:nn.waso, tst:dv.tst, tib:dv.tib, se:dv.se, sleep:nn.sleep, rhr:nn.rhr, rmssd:nn.rmssd,
-    mood:dd.mood, stress:dd.stress, alcohol:r.day ? (dd.alcohol ?? 0) : null, coffee:r.day && config.substance !== "caffeine" ? (dd.coffee ?? 0) : null,
+  const row = {day:dayNo, date, phase:combo ? (lv[0] ? "B" : "A") : phase, outcome, sol:nn.sol, waso:nn.waso, tst:dv.tst, tib:dv.tib, se:dv.se, sleep:nn.sleep, rhr:nn.rhr, rmssd:nn.rmssd,
+    mood:dd.mood, stress:dd.stress, alcohol:r.day ? (dd.alcohol ?? 0) : null, coffee:r.day && !hasCaffeine(config) ? (dd.coffee ?? 0) : null,
     offday:r.day ? b(dd.offday) : null, sick:r.day ? b(dd.sick) : null, cycle_day:config.cycle ? cycleDay(date) : null,
-    taken:phase !== "A" && r.day ? b(dd.taken) : null, amount:phase === "H" ? 0.5 : phase === "B" ? 1 : null,
-    dose_hour:phase !== "A" && dd.taken && dd.dose ? Math.round(toHours(dd.dose)*100)/100 : null,
+    taken:take1 && r.day ? b(dd.taken) : null, amount:combo ? null : phase === "H" ? 0.5 : phase === "B" ? 1 : null,
+    dose_hour:take1 && dd.taken && dd.dose ? Math.round(toHours(dd.dose)*100)/100 : null,
     belief:config.blinded && dd.belief_set ? dd.belief : null,
     rating_order:[dd.order, nn.order].filter(Boolean).join("|"), qa:dd.qa, qb:dd.qb, pair_order:r.day && dd.qa != null && dd.qb != null ? dd.pair_order : null};
+  if (combo) {
+    const k = key2(config);
+    row["phase_" + k] = lv[1] ? "B" : "A";
+    row["taken_" + k] = lv[1] && r.day ? b(dd.taken2) : null;
+    row["dose_hour_" + k] = lv[1] && dd.taken2 && dd.dose2 ? Math.round(toHours(dd.dose2)*100)/100 : null;
+  }
+  return row;
 }
 function toCsv(rows) {
   const esc = x => x == null ? "" : /[",\n]/.test(String(x)) ? `"${String(x).replace(/"/g, '""')}"` : String(x);
-  return [COLS.join(","), ...rows.map(r => COLS.map(c => esc(r[c])).join(","))].join("\n") + "\n";
+  const cs = cols();
+  return [cs.join(","), ...rows.map(r => cs.map(c => esc(r[c])).join(","))].join("\n") + "\n";
 }
 function hasAny(date) { const r = days[date]; return !!(r && (r.day || r.night)); }
 function buildCsvs() {
@@ -681,7 +758,7 @@ function buildCsvs() {
   return {base, exp};
 }
 function command() {
-  const c = config, prim = primaryOf(c), parts = ["python -m n1engine.run analyze 実験の記録.csv", `--item "${c.item}"`, `--outcome ${prim.key}`];
+  const c = config, prim = primaryOf(c), parts = ["python -m n1engine.run analyze 実験の記録.csv", `--item "${c.item}${c.combo ? ` × ${names2(c)}` : ""}"`, `--outcome ${prim.key}`];
   if (prim.key === "outcome") { parts.push(`--outcome-label "${prim.label}"`, `--timing ${prim.timing}`); if (prim.better < 0) parts.push("--lower-is-better"); }
   if (c.substance === "custom") { parts.push(`--half-life ${c.customTh}`); if (c.customTmax) parts.push(`--tmax ${c.customTmax}`); }
   else if (c.substance !== "none") parts.push(`--substance ${c.substance}`);
@@ -690,6 +767,11 @@ function command() {
   if (bt != null) parts.push(`--bedtime ${bt}`); if (wt != null) parts.push(`--waketime ${wt}`);
   if (c.cycle) parts.push(`--cycle-length ${c.cycleLength || 28}`);
   if (c.blinded) parts.push("--blinded");
+  if (c.combo) {
+    const sub = c.substance2 === "custom" ? `half=${c.customTh2}${c.customTmax2 ? `,tmax=${c.customTmax2}` : ""}` : c.substance2 === "none" ? "" : c.substance2;
+    const h2 = toHours(c.doseTime2);
+    parts.push(`--name "${c.item}"`, `--extra "${key2(c)}:${sub}:${h2 != null ? Math.round(h2*100)/100 : ""}:${names2(c)}"`);
+  }
   return parts.join(" \\\n  ") + " \\\n  --out レポート.md";
 }
 function planCommand() {
@@ -722,7 +804,7 @@ function renderExport() {
   out.push(el("section", {class:"card"}, el("div", {class:"card-head"}, el("h2", {text:"分析の仕方"})),
     el("div", {class:"card-body"},
       el("p", {style:"margin:0;font-size:14px", text:"Claude に「1人実験ノートの記録を分析して」と頼むと、この記録を読んで分析エンジンにかけ、レポートの下書きを作ります。自分で動かす場合は、self-experiment/engine で次を実行します。"}),
-      el("h3", {text:"普段の記録がそろったら（必要な日数の見積もり）"}), el("pre", {class:"cmd", text:planCommand()}),
+      el("h3", {text:"普段の記録がそろったら（必要な日数の見積もり）"}), config.combo ? el("p", {style:"margin:0;font-size:14px;color:var(--muted)", text:"2成分の掛け合わせは、56日の並びで固定です。必要な日数の見積もりには未対応です。"}) : el("pre", {class:"cmd", text:planCommand()}),
       el("h3", {text:"実験が終わったら（判定とレポート）"}), el("pre", {class:"cmd", text:command()}))));
   return out;
 }

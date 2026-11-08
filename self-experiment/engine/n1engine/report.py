@@ -45,12 +45,16 @@ def _diff(r: OutcomeResult, v=None) -> str:
     m, lo, hi = v.effect_mean * sign, v.effect_low * sign, v.effect_high * sign
     if sign < 0:
         lo, hi = hi, lo
+    def signed(x, nd):  # 丸めて0になる値は「-0」でなく「+0」と書く
+        v = round(x, nd)
+        return f"{(v if v != 0 else 0.0):+.{nd}f}"
+
     if r.log:
-        f = lambda x: f"{(math.exp(x) - 1) * 100:+.0f}%"  # noqa: E731
+        f = lambda x: signed((math.exp(x) - 1) * 100, 0) + "%"  # noqa: E731
         return f"{f(m)}（90%の幅：{f(lo)}〜{f(hi)}）"
     unit = "点" if r.unit == "0〜10" else r.unit
     nd = 1 if r.unit in ("0〜10", "拍/分", "%") else 0
-    return f"{m:+.{nd}f}{unit}（90%の幅：{lo:+.{nd}f}〜{hi:+.{nd}f}{unit}）"
+    return f"{signed(m, nd)}{unit}（90%の幅：{signed(lo, nd)}〜{signed(hi, nd)}{unit}）"
 
 
 def _prob_phrase(r: OutcomeResult) -> tuple[str, float]:

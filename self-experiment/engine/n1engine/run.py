@@ -84,19 +84,26 @@ def load(path: str) -> dict[str, np.ndarray]:
 
 
 def parse_extra(spec: str):
-    """--extra の値 '名前[:成分[:時刻]]' から、追加の要因を作る。成分は一覧の名前（なければ名前自体を成分名として探す）。"""
+    """--extra の値 '名前[:成分[:時刻[:呼び名]]]' から、追加の要因を作る。
+
+    成分は一覧の名前、または 'half=半減期[,tmax=最高濃度までの時間]'（時間）。空なら飲んだ日=1・飲まない日=0。
+    """
     from .pipeline import Factor
 
-    parts = spec.split(":")
+    parts = spec.split(":", 3)
     key = parts[0]
-    sub_key = parts[1] if len(parts) > 1 and parts[1] else None
-    hour = float(parts[2]) if len(parts) > 2 and parts[2] else 8.0
+    sub_key = parts[1].strip() if len(parts) > 1 else ""
+    hour = float(parts[2]) if len(parts) > 2 and parts[2].strip() else 8.0
+    label = parts[3].strip() if len(parts) > 3 and parts[3].strip() else None
     sub = None
-    if sub_key:
+    if sub_key.startswith("half="):
+        kv = dict(x.split("=", 1) for x in sub_key.split(","))
+        sub = custom(float(kv["half"]), float(kv["tmax"]) if kv.get("tmax") else None, label or key)
+    elif sub_key:
         if sub_key not in SUBSTANCES:
             raise SystemExit(f"成分の一覧にありません: {sub_key}（{', '.join(SUBSTANCES)}）")
         sub = SUBSTANCES[sub_key]
-    return Factor(key=key, label=sub.name if sub else key, substance=sub, dose_hour=hour)
+    return Factor(key=key, label=label or (sub.name if sub else key), substance=sub, dose_hour=hour)
 
 
 def _substance(a):
@@ -248,7 +255,7 @@ def main(argv: list[str] | None = None) -> None:
     an.add_argument("--no-consent", action="store_true", help="この人の要約を cohort に保存しない")
     an.add_argument("--no-pd", action="store_true", help="記録に現れるまでの遅れを推定しない（遅れが無いと分かっている場合。検出力が上がる）")
     an.add_argument("--extra", action="append", default=[], metavar="名前[:成分[:時刻]]",
-                    help="掛け合わせる追加の成分・要因（記録の列 phase_<名前>）。複数回指定できる")
+                    help="掛け合わせる追加の成分・要因（記録の列 phase_<名前>）。成分は一覧の名前か half=半減期[,tmax=時間]。複数回指定できる")
     an.add_argument("--name", help="最初の成分・要因の呼び名（既定は成分名）")
     an.add_argument("--out")
     an.add_argument("--seed", type=int, default=0)
