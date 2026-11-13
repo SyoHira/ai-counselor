@@ -600,3 +600,129 @@ def test_report_does_not_print_negative_zero():
 
     r = N(direction=1, log=False, unit="分", v=N(effect_mean=-0.2, effect_low=-0.4, effect_high=0.3))
     assert "-0" not in _diff(r)
+
+
+# ---------------------------------------------------------------- お客さん向け：記録用 Excel と HTML レポート
+
+
+def _fill_sheet(path, effect=-6.0, seed=0, skip=(12,)):
+    import datetime as dt
+
+    from openpyxl import load_workbook
+
+    from n1engine.sheet import _config, columns, levels
+
+    rng = np.random.default_rng(seed)
+    wb = load_workbook(path)
+    cfg = _config(wb)
+    ws = wb["毎日の記録"]
+    head = [c.value for c in ws[1]]
+    col = {k: head.index(h) + 1 for k, h, _ in columns(cfg)}
+    for r in range(2, ws.max_row + 1):
+        if r in skip:
+            continue
+        kind, day_no = ws.cell(r, 3).value, ws.cell(r, 2).value
+        a = levels(cfg, cfg.sequence[(day_no - 1) // 7])[0] if kind == "実験" else 0
+        if a:
+            ws.cell(r, col["taken"], "はい")
+            ws.cell(r, col["dose"], dt.time(21, 30))
+        ws.cell(r, col["bed"], dt.time(23, 0))
+        ws.cell(r, col["try_"], "23:10")
+        ws.cell(r, col["sol"], int(max(2, round(22 + effect * a + rng.normal(0, 3)))))
+        ws.cell(r, col["waso"], 10)
+        ws.cell(r, col["wake"], dt.time(6, 40))
+        ws.cell(r, col["up"], dt.time(7, 0))
+        ws.cell(r, col["mood"], 6)
+        ws.cell(r, col["offday"], "いいえ")
+    wb.save(path)
+    return cfg
+
+
+def test_sheet_roundtrip_reads_schedule_records_and_config(tmp_path):
+    from n1engine.sheet import SheetConfig, make_workbook, read_workbook
+
+    p = tmp_path / "rec.xlsx"
+    make_workbook(SheetConfig(item="マグネシウム", substance="magnesium", outcome="sol", dose_time="21:30", start_date="2026-11-20"), str(p), seed=1)
+    cfg = _fill_sheet(str(p))
+    d, base, cfg2 = read_workbook(str(p))
+    assert cfg2.sequence == cfg.sequence and cfg2.item == "マグネシウム" and cfg2.outcome == "sol"
+    assert len(base["day"]) == 7 and len(d["day"]) == 27  # 12行目（実験4日目）は書き忘れ
+    assert 4 not in set(d["day"])
+    assert d["treat"].sum() == 14 - (1 if cfg.sequence[0] == "B" else 0)
+    # 睡眠日誌：TST = 23:10→6:40 の450分 − 寝つき − 途中覚醒10分、TIB = 23:00→7:00 の480分
+    assert np.allclose(d["tst"], 450 - d["sol"] - 10) and np.allclose(d["tib"], 480)
+    on = d["treat"] == 1
+    assert np.all(d["taken"][on] == 1) and np.allclose(d["dose_hour"][on], 21.5) and np.all(np.isnan(d["dose_hour"][~on]))
+    assert np.all(d["offday"] == 0)
+
+
+def test_sheet_combo_writes_second_factor_columns(tmp_path):
+    from n1engine.sheet import SheetConfig, make_workbook, read_workbook
+
+    p = tmp_path / "combo.xlsx"
+    make_workbook(SheetConfig(item="A", substance="caffeine", dose_time="15:00", combo=True, item2="B", substance2="theanine",
+                              start_date="2026-11-20"), str(p), seed=2)
+    _fill_sheet(str(p), effect=0.0)
+    d, _, cfg = read_workbook(str(p))
+    assert len(cfg.sequence) == 8 and set(cfg.sequence) == set("0123")
+    assert "treat_theanine" in d and d["treat_theanine"].sum() == 28 and d["treat"].sum() in (27, 28)
+    assert "coffee" not in d  # カフェインを試すときは、カフェイン飲料の欄を出さない
+
+
+def test_sheet_cli_refuses_unsuitable_substance(tmp_path):
+    from n1engine.run import main
+
+    out = tmp_path / "vd.xlsx"
+    with pytest.raises(SystemExit):
+        main(["sheet", "--out", str(out), "--item", "ビタミンD", "--substance", "vitamin_d", "--start", "2026-11-20"])
+    assert not out.exists()
+
+
+def test_html_report_has_charts_comment_and_no_forbidden_words(tmp_path):
+    from n1engine.report_html import render_html
+    from n1engine.run import main
+    from n1engine.sheet import SheetConfig, make_workbook
+
+    p = tmp_path / "rec.xlsx"
+    make_workbook(SheetConfig(item="マグネシウム", substance="magnesium", outcome="sol", start_date="2026-11-20"), str(p), seed=3)
+    _fill_sheet(str(p), effect=-7.0, seed=3)
+    out = tmp_path / "r.html"
+    main(["analyze", str(p), "--html", str(out), "--comment", "担当者のコメントのテスト"])
+    page = out.read_text(encoding="utf-8")
+    assert page.count("<svg") >= 3 and "飲まない期間" in page and "飲んだ期間" in page
+    assert "担当者のコメントのテスト" in page and "毎日の記録を表で見る" in page
+    for word in ("効果", "効く", "効力", "効き"):
+        assert word not in page
+    assert callable(render_html)
+
+
+def test_baseline_report_from_first_week(tmp_path):
+    from n1engine.run import main
+    from n1engine.sheet import SheetConfig, make_workbook
+
+    p = tmp_path / "rec.xlsx"
+    make_workbook(SheetConfig(item="マグネシウム", substance="magnesium", outcome="sol", start_date="2026-11-20"), str(p), seed=4)
+    _fill_sheet(str(p), seed=4, skip=())
+    out = tmp_path / "b.md"
+    page = tmp_path / "b.html"
+    main(["baseline", str(p), "--sims", "6", "--out", str(out), "--html", str(page)])
+    md = out.read_text(encoding="utf-8")
+    assert "28日の実験" in md and "56日の実験" in md and "記録日数：7日" in md
+    for word in ("効果", "効く", "効力", "効き"):
+        assert word not in md and word not in page.read_text(encoding="utf-8")
+
+
+SALES_BANNED = ("効果", "効く", "効き", "効能", "効力", "改善", "治る", "治す", "治療", "必ず", "絶対", "確実", "予防", "痩せ")
+
+
+def test_sales_texts_have_no_banned_expressions():
+    # 出品文と定型文（お客さんの目に触れる文章）。見出しの注意書き（> で始まる行）は除く
+    root = pathlib.Path(__file__).resolve().parents[2] / "sales"
+    files = sorted(root.glob("*.md"))
+    assert files
+    for f in files:
+        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if line.startswith(">"):
+                continue
+            for w in SALES_BANNED:
+                assert w not in line, f"{f.name}:{n} に「{w}」"

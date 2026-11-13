@@ -14,12 +14,14 @@ on:
     paths:
       - "self-experiment/engine/**"
       - "self-experiment/form/**"
+      - "self-experiment/sales/**"
       - ".github/workflows/self-experiment.yml"
   push:
     branches: [main]
     paths:
       - "self-experiment/engine/**"
       - "self-experiment/form/**"
+      - "self-experiment/sales/**"
       - ".github/workflows/self-experiment.yml"
   workflow_dispatch:
     inputs:

@@ -119,29 +119,44 @@ def _substance(a):
 def cmd_analyze(a: argparse.Namespace) -> None:
     from .cohort import CohortStore
 
-    d = load(a.csv)
     store = CohortStore(a.cohort) if a.cohort else None
-    direction = -1 if a.lower_is_better else None
-    res = analyze(
-        d,
-        primary=a.outcome,
-        timing=a.timing,
-        direction=direction,
-        substance=_substance(a),
-        dose_hour=a.dose_hour,
-        bedtime=a.bedtime,
-        waketime=a.waketime,
-        cycle_length=a.cycle_length,
-        mid=a.mid,
-        seed=a.seed,
-        pd=not a.no_pd,
-        cohort=store,
-        client_id=a.client_id,
-        blinded=a.blinded,
-        consent=not a.no_consent,
-        extras=[parse_extra(x) for x in a.extra],
-        primary_label=a.name,
-    )
+    if a.csv.lower().endswith(".xlsx"):
+        # お客さんの記録用 Excel：設定（成分・主要項目・並びなど）もファイルから読む
+        from .sheet import analyze_kwargs, read_workbook
+
+        d, _, cfg = read_workbook(a.csv)
+        kw = analyze_kwargs(cfg)
+        a.outcome = cfg.outcome
+        a.item = a.item or (f"{cfg.item} × {cfg.item2}" if cfg.combo else cfg.item)
+        a.outcome_label = a.outcome_label or (cfg.outcome_label if cfg.outcome == "outcome" else None)
+        a.client_id = a.client_id or cfg.client_id or None
+        res = analyze(d, mid=a.mid, seed=a.seed, pd=not a.no_pd, cohort=store, client_id=a.client_id,
+                      blinded=a.blinded, consent=not a.no_consent, **kw)
+    else:
+        if not a.item:
+            raise SystemExit("--item（試したもの）を指定してください")
+        d = load(a.csv)
+        direction = -1 if a.lower_is_better else None
+        res = analyze(
+            d,
+            primary=a.outcome,
+            timing=a.timing,
+            direction=direction,
+            substance=_substance(a),
+            dose_hour=a.dose_hour,
+            bedtime=a.bedtime,
+            waketime=a.waketime,
+            cycle_length=a.cycle_length,
+            mid=a.mid,
+            seed=a.seed,
+            pd=not a.no_pd,
+            cohort=store,
+            client_id=a.client_id,
+            blinded=a.blinded,
+            consent=not a.no_consent,
+            extras=[parse_extra(x) for x in a.extra],
+            primary_label=a.name,
+        )
     if store is not None:
         store.save()
     blind = belief = None
@@ -149,6 +164,22 @@ def cmd_analyze(a: argparse.Namespace) -> None:
         blind = blind_integrity(d["belief"], d["treat"])
         belief = belief_association(d[a.outcome] * (res.primary.direction or 1), d["treat"], d["belief"])
     md = render(item=a.item, outcome_label=a.outcome_label, res=res, blinded=a.blinded, blind=blind, belief=belief)
+    comment = _read_comment(a.comment)
+    if comment:
+        md = md.replace("<!-- ここに担当者のコメントを書く -->", comment.strip())
+    if a.html or a.pdf:
+        from .report_html import render_html, to_pdf
+
+        page = render_html(md, res, d, a.outcome, comment=comment)
+        if a.html:
+            with open(a.html, "w", encoding="utf-8") as fh:
+                fh.write(page)
+            print(f"お客さん向けのレポート（HTML）を書き出しました: {a.html}")
+        if a.pdf:
+            to_pdf(page, a.pdf)
+            print(f"お客さん向けのレポート（PDF）を書き出しました: {a.pdf}")
+    if not comment:
+        print("注意：担当者のコメントが入っていません（--comment で入れる）", file=sys.stderr)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
             fh.write(md)
@@ -157,9 +188,28 @@ def cmd_analyze(a: argparse.Namespace) -> None:
         print(md)
 
 
+def _read_comment(v: str | None) -> str | None:
+    """--comment の値。@ で始まればそのファイルを読む。"""
+    if not v:
+        return None
+    if v.startswith("@"):
+        with open(v[1:], encoding="utf-8") as fh:
+            return fh.read()
+    return v
+
+
 def cmd_plan(a: argparse.Namespace) -> None:
-    d = load(a.csv)
-    sub = _substance(a)
+    if a.csv.lower().endswith(".xlsx"):
+        from .sheet import _hours, analyze_kwargs, read_workbook
+
+        _, d, cfg = read_workbook(a.csv)
+        kw = analyze_kwargs(cfg)
+        a.outcome, a.dose_hour = cfg.outcome, kw["dose_hour"]
+        a.timing = cfg.outcome_timing if cfg.outcome == "outcome" else a.timing
+        sub = kw["substance"]
+    else:
+        d = load(a.csv)
+        sub = _substance(a)
     w = window_for(a.timing, a.bedtime, a.waketime)
     pk = sub.pk if sub else None
     var = VARIABLES.get(a.outcome)
@@ -227,6 +277,76 @@ def cmd_pool(a: argparse.Namespace) -> None:
         print(f"  {path}: 1人の推定 {e:+.2f} → まとめた推定 {m:+.2f}")
 
 
+def cmd_sheet(a: argparse.Namespace) -> None:
+    """お客さんの記録用 Excel を作る（日程・今日すること・入力欄つき）。"""
+    from .sheet import SheetConfig, make_workbook, schedule_rows
+
+    cfg = SheetConfig(
+        item=a.item, substance=a.substance or "none", outcome=a.outcome, outcome_label=a.outcome_label or "",
+        outcome_timing=a.timing, lower_is_better=a.lower_is_better, dose_time=a.dose_time, start_date=a.start,
+        half_life=a.half_life, tmax=a.tmax, combo=bool(a.item2), item2=a.item2 or "", substance2=a.substance2 or "none",
+        half_life2=a.half_life2, tmax2=a.tmax2, dose_time2=a.dose_time2, dose=a.dose_levels, cycle=a.cycle,
+        cycle_length=a.cycle_length, last_period=a.last_period or "", wear=a.wear, bedtime=a.bedtime_time,
+        waketime=a.waketime_time, client_id=a.client_id or "",
+    )
+    if cfg.substance == "custom" and not cfg.half_life:
+        raise SystemExit("custom の成分には --half-life が必要です")
+    if cfg.outcome == "outcome" and not cfg.outcome_label:
+        raise SystemExit("--outcome outcome のときは --outcome-label（0〜10で答える項目の名前）が必要です")
+    if cfg.outcome in VARIABLES and VARIABLES[cfg.outcome].unit in ("拍/分", "ミリ秒") and not cfg.wear:
+        raise SystemExit("この主要項目には機器の記録が必要です（--wear）")
+    # 7日ずつの入れ替えに向かない成分は、ここで止める（売ってから「調べられない」と分かるのを防ぐ）
+    from .domain.pk import UNSUITABLE, suitability as _suit, window_for as _win
+
+    timing = cfg.outcome_timing if cfg.outcome == "outcome" else (VARIABLES[cfg.outcome].timing if cfg.outcome in VARIABLES else "day")
+    for key, half, tmax, dose_time, name in [(cfg.substance, cfg.half_life, cfg.tmax, cfg.dose_time, cfg.item)] + ([(cfg.substance2, cfg.half_life2, cfg.tmax2, cfg.dose_time2, cfg.item2)] if cfg.combo else []):
+        s_ = custom(half, tmax, name) if key == "custom" else SUBSTANCES.get(key)
+        if s_ is None:
+            continue
+        from .sheet import _hours
+
+        r = _suit(s_.pk, _hours(dose_time) or 8.0, _win(timing or "day", _hours(cfg.bedtime) or 23.0, _hours(cfg.waketime) or 7.0), steady_days=s_.steady_days)
+        print(f"{name}：{r['level']}。{r['text']}")
+        if r["level"] == UNSUITABLE and not a.force:
+            raise SystemExit(f"{name} は7日ずつの入れ替えに向かないため、記録用のファイルを作りませんでした（この形では調べられないと伝えて断る。--force で作れる）")
+    make_workbook(cfg, a.out, seed=a.seed)
+    rows = schedule_rows(cfg)
+    print(f"記録用のファイルを作りました: {a.out}")
+    print(f"  期間：{rows[0]['date']} 〜 {rows[-1]['date']}（普段7日＋実験{len(rows) - 7}日）／並び：{cfg.sequence}（お客さんには見せない）")
+
+
+def cmd_baseline(a: argparse.Namespace) -> None:
+    """入口の商品：普段の記録（7日）から、揺れ方と必要日数の見込みのレポートを作る。"""
+    from .baseline_report import analyze_baseline, render_html as render_base_html, render_md
+    from .report_html import to_pdf
+    from .sheet import analyze_kwargs, read_workbook
+
+    if not a.xlsx.lower().endswith(".xlsx"):
+        raise SystemExit("記録用の Excel（run sheet で作ったもの）を指定してください")
+    _, base, cfg = read_workbook(a.xlsx)
+    kw = analyze_kwargs(cfg)
+    r = analyze_baseline(base, cfg.outcome, substance=kw["substance"], dose_hour=kw["dose_hour"], timing=kw.get("timing", "day"),
+                         bedtime=kw["bedtime"], waketime=kw["waketime"], n_sims=a.sims, seed=a.seed)
+    sub = kw["substance"]
+    md = render_md(r, cfg.item, sub.name if sub else None)
+    comment = _read_comment(a.comment)
+    if comment:
+        md = md.replace("<!-- ここに担当者のコメントを書く -->", comment.strip())
+    else:
+        print("注意：担当者のコメントが入っていません（--comment で入れる）", file=sys.stderr)
+    page = render_base_html(md, r, comment)
+    for path, text in ((a.out, md), (a.html, page)):
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            print(f"書き出しました: {path}")
+    if a.pdf:
+        to_pdf(page, a.pdf)
+        print(f"書き出しました: {a.pdf}")
+    if not (a.out or a.html or a.pdf):
+        print(md)
+
+
 def _common(p):
     p.add_argument("--substance", help=f"成分（{', '.join(SUBSTANCES)}）")
     p.add_argument("--half-life", type=float, help="一覧に無い成分の半減期（時間）")
@@ -243,7 +363,7 @@ def main(argv: list[str] | None = None) -> None:
 
     an = sub.add_parser("analyze", help="記録を分析してレポートを作る")
     an.add_argument("csv")
-    an.add_argument("--item", required=True, help="試したもの（例：カフェイン（15時））")
+    an.add_argument("--item", help="試したもの（例：カフェイン（15時））。記録用 Excel なら省略できる")
     an.add_argument("--outcome", default="outcome", help="主要項目の列名（実験前に決めた1つ）")
     an.add_argument("--outcome-label", help="主要項目の呼び名（一覧にない列のとき）")
     an.add_argument("--lower-is-better", action="store_true", help="数字が低いほど良い項目（だるさ等）")
@@ -257,7 +377,10 @@ def main(argv: list[str] | None = None) -> None:
     an.add_argument("--extra", action="append", default=[], metavar="名前[:成分[:時刻]]",
                     help="掛け合わせる追加の成分・要因（記録の列 phase_<名前>）。成分は一覧の名前か half=半減期[,tmax=時間]。複数回指定できる")
     an.add_argument("--name", help="最初の成分・要因の呼び名（既定は成分名）")
-    an.add_argument("--out")
+    an.add_argument("--out", help="レポートの下書き（Markdown）")
+    an.add_argument("--html", help="お客さんに渡すレポート（HTML、図つき）")
+    an.add_argument("--pdf", help="お客さんに渡すレポート（PDF、図つき。Chrome / Chromium が必要）")
+    an.add_argument("--comment", help="担当者のコメント（@ファイル名 でファイルから読む）")
     an.add_argument("--seed", type=int, default=0)
     _common(an)
     an.set_defaults(func=cmd_analyze)
@@ -274,6 +397,45 @@ def main(argv: list[str] | None = None) -> None:
     qu = sub.add_parser("quantum", help="研究層：質問の順番の量子モデルを比べる（複数人のCSV）")
     qu.add_argument("csv", nargs="+")
     qu.set_defaults(func=cmd_quantum)
+
+    sh = sub.add_parser("sheet", help="お客さんの記録用 Excel を作る（ココナラのトークルームで受け渡す）")
+    sh.add_argument("--out", required=True, help="作るファイル（.xlsx）")
+    sh.add_argument("--item", required=True, help="試すもの（例：マグネシウム（就寝前1錠））")
+    sh.add_argument("--substance", help=f"成分（{', '.join(SUBSTANCES)}、custom、none）")
+    sh.add_argument("--half-life", type=float, help="custom の半減期（時間）")
+    sh.add_argument("--tmax", type=float)
+    sh.add_argument("--outcome", default="sol", help="主要項目（sol・waso・sleep・se・tst・rhr・rmssd・mood・stress・outcome）")
+    sh.add_argument("--outcome-label", help="outcome のときの項目名（0〜10で答える）")
+    sh.add_argument("--timing", choices=("day", "night"), default="day", help="outcome のときの時間帯")
+    sh.add_argument("--lower-is-better", action="store_true")
+    sh.add_argument("--dose-time", default="21:00", help="飲む時刻（21:00）")
+    sh.add_argument("--start", required=True, help="普段どおりの記録を始める日（YYYY-MM-DD）")
+    sh.add_argument("--item2", help="2つ目に試すもの（指定すると2成分の掛け合わせ・56日）")
+    sh.add_argument("--substance2", help="2つ目の成分")
+    sh.add_argument("--half-life2", type=float)
+    sh.add_argument("--tmax2", type=float)
+    sh.add_argument("--dose-time2", default="21:00")
+    sh.add_argument("--dose-levels", action="store_true", help="半分の量の期間を入れる（42日）")
+    sh.add_argument("--cycle", action="store_true", help="月経周期を記録する（56日）")
+    sh.add_argument("--cycle-length", type=float, default=28.0)
+    sh.add_argument("--last-period", help="直近の月経初日（YYYY-MM-DD）")
+    sh.add_argument("--wear", action="store_true", help="睡眠中の心拍を機器で測っている")
+    sh.add_argument("--bedtime", dest="bedtime_time", default="23:00")
+    sh.add_argument("--waketime", dest="waketime_time", default="07:00")
+    sh.add_argument("--client-id")
+    sh.add_argument("--seed", type=int)
+    sh.add_argument("--force", action="store_true", help="向かない成分でも作る")
+    sh.set_defaults(func=cmd_sheet)
+
+    bl = sub.add_parser("baseline", help="入口の商品：普段の記録7日から、揺れ方と必要日数の見込みのレポートを作る")
+    bl.add_argument("xlsx")
+    bl.add_argument("--out", help="Markdown")
+    bl.add_argument("--html")
+    bl.add_argument("--pdf")
+    bl.add_argument("--comment", help="担当者のコメント（@ファイル名 でファイルから読む）")
+    bl.add_argument("--sims", type=int, default=60)
+    bl.add_argument("--seed", type=int, default=0)
+    bl.set_defaults(func=cmd_baseline)
 
     po = sub.add_parser("pool", help="研究層：複数人の1人実験を階層モデルでまとめる")
     po.add_argument("csv", nargs="+")

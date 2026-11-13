@@ -13,6 +13,10 @@ python -m n1engine.run analyze examples/example.csv \
 python examples/make_factorial_example.py  # 2成分の掛け合わせの見本（カフェイン×テアニン、レポートつき）
 python -m n1engine.run substances        # 成分の一覧と、7日ずつの入れ替えに向いているか
 python -m n1engine.run plan 普段の記録.csv --substance caffeine --dose-hour 15 --outcome sol
+# お客さんとのやり取り（ココナラ）：記録用 Excel を作る → 7日後に揺れ方のレポート → 最後に判定レポート（PDF）
+python -m n1engine.run sheet --out 記録.xlsx --item "マグネシウム（就寝前1錠）" --substance magnesium --outcome sol --dose-time 21:30 --start 2026-12-01
+python -m n1engine.run baseline 記録.xlsx --pdf 揺れ方.pdf --comment @コメント.txt
+python -m n1engine.run analyze 記録.xlsx --pdf レポート.pdf --comment @コメント.txt
 python -m pytest -q tests                # 壊れていないかの確認（2分前後）
 python scripts/verify_matrix.py --all --n 30 --jobs 4   # 複数の成分の掛け合わせの検証（10分前後）
 python scripts/calibrate.py              # 本格的な検証（10分前後）
@@ -153,6 +157,14 @@ ke = ln2 ÷ 半減期    ka = 最高濃度までの時間 Tmax から逆算
 - 3つ以上：分析は動く（`--extra` を2回。すべての2つの組の上乗せを足す。3つの同時の上乗せは入れない）が、検証したのは2成分まで。並びの作成（`make_factorial_schedule`）も2成分だけで、3つ以上は56日で8条件を1回ずつにすると並びの重なり（VIF）が5を超えるため、使うなら期間を延ばす
 
 検証は `scripts/verify_matrix.py`（成分の組 × 本当の差の組み合わせ）と、GitHub Actions（`.github/workflows/self-experiment.yml`）で毎回回す。
+
+### 2.12 お客さんとの受け渡し（`sheet.py`・`report_html.py`・`baseline_report.py`）
+
+ココナラでは外部のフォームへの誘導が禁止され、データはトークルームのファイル添付で受け渡す（`../docs/02-platforms.md`）。そこで記録・納品をファイルで完結させる。
+
+- `sheet.py`：お客さんごとの記録用 Excel を作る（`run sheet`）。日付・「今日すること」（飲む／飲まない）が入り、記入欄だけ編集できる（シート保護）。0〜10・分・時刻・はい/いいえは入力規則で制限。成分・主要項目・並び・開始日は非表示の「設定」シートに入り、`run analyze 記録.xlsx` は設定もファイルから読む。睡眠日誌の時刻から眠っていた時間・寝床にいた時間を計算する。7日ずつの入れ替えに向かない成分はファイルを作らずに止める
+- `report_html.py`：判定レポートを HTML / PDF にする（`--html` / `--pdf`）。文章は report.py の Markdown をそのまま使い（禁止語のテストが効く）、毎日の記録の図（条件ごとの色と形・期間の平均）と差の大きさの図（90%の幅、差なしの線、意味のある差の線）を足す。PDF は手元の Chrome / Chromium で作る（`N1_CHROME` で場所を指定できる）
+- `baseline_report.py`：入口の商品。普段の記録7日から、平均・ばらつき・前日の引きずりの見込みと、28日・56日の実験で「はっきり差がある」と言える見込み（`simulate.plan_length`、本番と同じ判定の設定）を出す（`run baseline`）
 
 ### 2.7 外れた日に強い揺れ（v0.3.0）
 
