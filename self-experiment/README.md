@@ -26,7 +26,7 @@
 | [docs/03-marketing.md](docs/03-marketing.md) | SNS、量子の出し方、守ること |
 | [docs/04-compliance.md](docs/04-compliance.md) | 規制の整理と、出品前に確認すること |
 | [docs/05-research.md](docs/05-research.md) | 研究層（量子認知の検証）と、最新研究の取り込み方 |
-| [sales/](sales/) | ココナラの出品文（入口と本番の2つ）と、トークルームの定型文。禁止語はテストで確認 |
+| [sales/](sales/) | 販売先ごと（ココナラ・note・MENTA・タイムチケット・自分のサイト）の出品文・定型文・手取りの比較・出品前に確かめること。`engine/n1engine/channels/` の1つの元から作る生成物。禁止語・外部リンクはテストで確認 |
 | [form/](form/) | 自分用の毎日の記録フォーム（claude.ai のアーティファクト。作成者だけが記録でき、CSV で書き出す）。ココナラのお客さんには使わない（外部への誘導になるため。お客さんは Excel） |
 | [engine/](engine/) | 分析エンジン（Python）。しくみの解説は [engine/README.md](engine/README.md)、検証結果は [engine/CALIBRATION.md](engine/CALIBRATION.md) |
 
@@ -35,7 +35,7 @@
 1. **自分が最初の被験者になる。** 今飲んでいるサプリで、まず7日間の普段通りの記録をつけ、`engine` の `plan` で自分に必要な日数を出す
 2. 記録フォーム（`form/`）で毎日記録し、書き出した CSV をエンジンにかける。お客さんは `run sheet` で作る Excel に記録し、トークルームで受け渡す
 3. 出品前の確認を済ませる（[docs/04-compliance.md](docs/04-compliance.md) の未確認事項。ココナラのヘルプ原文と、運営への事前問い合わせ）
-4. ココナラに2つ出品する：入口（普段の記録7日の揺れ方）と本番（1人実験）。文面は [sales/](sales/)
+4. ココナラに2つ出品する：入口（普段の記録7日の揺れ方）と本番（1人実験）。同じ時期に note でも売る。文面は [sales/](sales/)、販売先の比較は [docs/02-platforms.md](docs/02-platforms.md)
 5. 記録が溜まったら研究層を動かす
 
 1の実験記録が、そのまま最初の事例とSNSの最初の投稿になる。

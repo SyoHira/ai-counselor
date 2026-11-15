@@ -49,13 +49,13 @@ def listing(p: Platform, prod: Product) -> str:
     for s in prod.sections:
         L.append(h(s.head))
         L.append("")
-        for para in s.paras[:1] if s.items and s.paras else s.paras:
+        for para in s.paras:
             L += [fill(para, p), ""]
         for i, it in enumerate(s.items, 1):
             L.append(f"{i}. {fill(it, p)}" if s.numbered else (f"- {fill(it, p)}" if md else f"・{fill(it, p)}"))
         if s.items:
             L.append("")
-        for para in s.paras[1:] if s.items and s.paras else []:
+        for para in s.after:
             L += [fill(para, p), ""]
     L += [h(f"{p.buy}前にご確認ください（当てはまる場合は{p.buy}いただけません）"), "",
           "次のどれかに当てはまる方は、この実験を行わないでください。どれに当てはまるかを教えていただく必要はありません。", ""]
@@ -103,15 +103,36 @@ def take_home(p: Platform, price: int) -> int:
 def pricing(target: int = 50000) -> str:
     L = [f"# 販売先ごとの手取りと、月{target:,}円に必要な件数", "",
          "手数料は profiles.py の値（出典と確認日はそこに書いてある）。振込手数料・消費税の扱いは含めていない。", "",
-         "| 販売先 | 手数料 | " + " | ".join(f"{LABEL.get(pr.key, pr.key)} {pr.price:,}円の手取り" for pr in PRODUCTS.values()) + " | 本番だけで月の目標に必要な件数 | 売上が入る時期 |",
-         "|---|---|" + "---|" * len(PRODUCTS) + "---|---|"]
+         "| 販売先 | 手数料 | " + " | ".join(f"{LABEL.get(pr.key, pr.key)} {pr.price:,}円の手取り" for pr in PRODUCTS.values()) + " | 本番だけで月の目標に必要な件数 | 買い手の支払い（本番） | 売上が入る時期 |",
+         "|---|---|" + "---|" * len(PRODUCTS) + "---|---|---|"]
     main = PRODUCTS["main"]
     for p in PLATFORMS.values():
         fee = f"{p.fee_rate * 100:g}%" + (f"＋{p.fee_fixed:g}円" if p.fee_fixed else "")
         th = [f"{take_home(p, pr.price):,}円" for pr in PRODUCTS.values()]
         need = math.ceil(target / max(take_home(p, main.price), 1))
-        L.append(f"| {p.name} | {fee} | " + " | ".join(th) + f" | {need}件 | {p.payout} |")
+        buyer = f"{int(round(main.price * (1 + p.buyer_fee_rate))):,}円"
+        L.append(f"| {p.name} | {fee} | " + " | ".join(th) + f" | {need}件 | {buyer} | {p.payout} |")
+    from .profiles import NOT_SUITABLE
+
+    L += ["", "## 調べたうえで使わない販売先", ""] + [f"- {k}：{v}" for k, v in NOT_SUITABLE.items()]
     return "\n".join(L) + "\n"
+
+
+def platform_guide() -> str:
+    """販売先ごとの、出品前に確かめること・ファイルの受け渡し・出典（sales/README.md）。"""
+    L = ["# 販売先ごとの準備", "",
+         "`python -m n1engine.run sales --out ../sales` で作った一覧。直すときは engine/n1engine/channels/profiles.py を直して作り直す。",
+         "「要約」は検索エンジンが公式ページから抜き出した要約で確かめた値（原文は未読）。出品前に原文を読む。", "",
+         "販売先ごとの文面は `<販売先>/listing-entry.md`（入口）・`listing-main.md`（本番）・`messages.md`（定型文）。手取りの比較は [pricing.md](pricing.md)。", ""]
+    for p in PLATFORMS.values():
+        L += [f"## {p.name}", "",
+              f"- やり取りの場所：{p.msg_place}",
+              f"- ファイルの受け渡し：{p.files}",
+              f"- 出品文・メッセージの外部URL：{'書ける' if p.external_links else '書かない（禁止）'}／外部の連絡先：{'交換できる' if p.contact_exchange else '書かない（禁止）'}",
+              f"- 売上が入る時期：{p.payout}", "", "出品前に確かめること", ""]
+        L += [f"- [ ] {x}" for x in p.checklist] + ["", "出典", ""]
+        L += [f"- {what}（{when}、{how}）：{url}" for what, url, when, how in p.sources] + [""]
+    return "\n".join(L).rstrip() + "\n"
 
 
 def export_all(out: str) -> list[str]:
@@ -132,9 +153,10 @@ def export_all(out: str) -> list[str]:
         f = d / "messages.md"
         f.write_text(m, encoding="utf-8")
         written.append(str(f))
-    f = root / "pricing.md"
-    f.write_text(pricing(), encoding="utf-8")
-    written.append(str(f))
+    for name, text in (("pricing.md", pricing()), ("README.md", platform_guide())):
+        f = root / name
+        f.write_text(text, encoding="utf-8")
+        written.append(str(f))
     if problems:
         raise ValueError("決まりに合わない文面があります：\n" + "\n".join(problems))
     return written

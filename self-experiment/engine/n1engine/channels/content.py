@@ -17,9 +17,10 @@ from dataclasses import dataclass, field
 @dataclass
 class Section:
     head: str
-    paras: list[str] = field(default_factory=list)  # 段落
+    paras: list[str] = field(default_factory=list)  # 箇条書きの前の段落
     items: list[str] = field(default_factory=list)  # 箇条書き
     numbered: bool = False
+    after: list[str] = field(default_factory=list)  # 箇条書きの後の段落
 
 
 @dataclass
@@ -52,7 +53,7 @@ ENTRY = Product(
     title="普段の記録7日から、あなたの体調の揺れ方と「実験に必要な日数」を出します",
     short="体調の揺れ方と実験に必要な日数を出します",
     price=2000,
-    price_note="（仮）",
+    price_note="",
     delivery="記録を受け取ってから3日",
     lead="サプリを続けているけれど、本当に違いがあるのか分からない。そう感じたときに、まず知っておきたいのが「あなたの体調が、ふだんどれくらい揺れているか」です。",
     sections=[
@@ -69,7 +70,7 @@ ENTRY = Product(
             "あなた専用の記録用ファイル（Excel）をお送りします。日付と書く欄が入っています",
             "7日間、普段どおりに過ごして記録し、ファイルを{send}ください（試しているサプリは、この7日は飲みません）",
             "3日以内にレポート（PDF）をお送りします",
-        ], numbered=True, paras=["この7日の記録は、続けて本番の1人実験を申し込まれた場合、そのまま「普段どおりの記録」として使えます。"]),
+        ], numbered=True, after=["この7日の記録は、続けて本番の1人実験を申し込まれた場合、そのまま「普段どおりの記録」として使えます。"]),
     ],
     faq=[("何を試せますか？", "この7日はまだ何も試しません。普段の揺れ方を測ります。")] + COMMON_FAQ,
 )
@@ -103,7 +104,7 @@ MAIN = Product(
         Section("お届けするもの", items=[
             "判定レポート（PDF）：結論、毎日の記録の図、差の大きさと幅、偶然でも出る頻度、成分の体内での動き（半減期など）、ほかの記録（睡眠・気分など）の参考値、計算の確認",
             "担当者のコメント",
-        ], paras=["レポートの下書きは、統計の分析プログラムとAIの補助で作り、担当者が確認してからお送りします。"]),
+        ], after=["レポートの下書きは、統計の分析プログラムとAIの補助で作り、担当者が確認してからお送りします。"]),
         Section("オプション（候補）", items=[
             "2つのサプリを単独と両方で比べる56日の実験",
             "月経周期に合わせた56日の実験",

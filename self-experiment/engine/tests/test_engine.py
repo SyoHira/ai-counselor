@@ -718,7 +718,7 @@ SALES_BANNED = ("効果", "効く", "効き", "効能", "効力", "改善", "治
 def test_sales_texts_have_no_banned_expressions():
     # 出品文と定型文（お客さんの目に触れる文章）。見出しの注意書き（> で始まる行）は除く
     root = pathlib.Path(__file__).resolve().parents[2] / "sales"
-    files = sorted(root.glob("**/*.md"))
+    files = sorted(f for f in root.glob("*/*.md") if f.name.startswith("listing-") or f.name == "messages.md")  # 担当者向けの README・pricing は除く
     assert files
     for f in files:
         for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):

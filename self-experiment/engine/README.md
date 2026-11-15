@@ -17,6 +17,11 @@ python -m n1engine.run plan 普段の記録.csv --substance caffeine --dose-hour
 python -m n1engine.run sheet --out 記録.xlsx --item "マグネシウム（就寝前1錠）" --substance magnesium --outcome sol --dose-time 21:30 --start 2026-12-01
 python -m n1engine.run baseline 記録.xlsx --pdf 揺れ方.pdf --comment @コメント.txt
 python -m n1engine.run analyze 記録.xlsx --pdf レポート.pdf --comment @コメント.txt
+# 販売先への展開：出品文・定型文（販売先ごと）、手取りの比較、自分のサイト
+python -m n1engine.run sales --out ../sales
+python -m n1engine.run pricing --target 50000
+python -m n1engine.run site --example site.json   # 【要記入】を埋めてから
+python -m n1engine.run site --config site.json --out 公開用
 python -m pytest -q tests                # 壊れていないかの確認（2分前後）
 python scripts/verify_matrix.py --all --n 30 --jobs 4   # 複数の成分の掛け合わせの検証（10分前後）
 python scripts/calibrate.py              # 本格的な検証（10分前後）

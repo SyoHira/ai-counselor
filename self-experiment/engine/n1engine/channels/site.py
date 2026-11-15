@@ -20,16 +20,18 @@ from .content import EXCLUSIONS, PRODUCTS
 from .profiles import PLATFORMS
 from .render import BANNED, fill
 
-REQUIRED = {  # 特定商取引法の表示（通信販売）で書くもの。消費者庁の通信販売の広告の表示事項に沿う
-    "seller": "販売事業者の名前",
-    "representative": "運営責任者",
-    "address": "住所（請求があれば遅滞なく開示すると書いて省略する場合は、その旨）",
-    "phone": "電話番号（同上）",
-    "email": "メールアドレス",
-    "price_note": "販売価格（各サービスのページに表示）と、価格以外に必要な費用",
-    "payment": "支払い方法・支払いの時期",
-    "delivery": "役務の提供時期",
-    "cancel": "申し込みの撤回・解約の条件（役務の性質上の扱いを含む）",
+REQUIRED = {  # 特定商取引法の表示（通信販売の広告）で書くもの：（表示する見出し, 書き方の注意）。消費者庁の通信販売の広告の表示事項に沿う
+    "seller": ("販売事業者", "氏名または名称"),
+    "representative": ("運営責任者", ""),
+    "address": ("住所", "「請求があれば遅滞なく開示します」と書いて省略する場合は、実際に開示できる体制にする"),
+    "phone": ("電話番号", "同上"),
+    "email": ("メールアドレス", ""),
+    "price_note": ("販売価格と、価格以外に必要な費用", ""),
+    "payment": ("支払いの方法・時期", ""),
+    "delivery": ("役務の提供時期", ""),
+    "cancel": ("申し込みの撤回・返金", "役務の性質上の扱いを含める"),
+    "environment": ("必要な環境", "記録用ファイルとレポートを開くためのもの"),
+    "period": ("申し込みの期間", ""),
 }
 
 EXAMPLE_CONFIG = {
@@ -43,6 +45,8 @@ EXAMPLE_CONFIG = {
     "payment": "クレジットカード（決済サービスの支払いページ）。お申し込みの時点でお支払いが確定します",
     "delivery": "お支払いの確認後、2営業日以内にメールでご連絡し、記録用ファイルをお送りします。レポートは各サービスに記載の日数でお送りします",
     "cancel": "記録用ファイルをお送りする前は全額返金します。お送りした後は、役務の性質上、返金いたしません。成分が7日ずつの入れ替えに向かないと分かった場合は全額返金します",
+    "environment": "記録用ファイルは Excel 形式（.xlsx）、レポートは PDF です。Excel または互換のアプリと、PDF を開けるアプリが必要です",
+    "period": "期間の定めはありません（受け付けを止めるときはこのページでお知らせします）",
     "pay_links": {"entry": "【要記入：支払いリンク】", "main": "【要記入：支払いリンク】"},
 }
 
@@ -76,8 +80,12 @@ dl.faq dt{font-weight:700;margin-top:14px}
 dl.faq dd{margin:4px 0 0}
 table{border-collapse:collapse;width:100%;font-size:15px}
 th,td{border-bottom:1px solid var(--rule);text-align:left;vertical-align:top;padding:10px 8px}
-th{width:34%;color:var(--ink2);font-weight:600}
+th{width:30%;min-width:7em;color:var(--ink2);font-weight:600}
 .todo{color:#b03a2e;font-weight:700}
+dl.terms{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;font-size:14px;background:var(--soft);border-radius:8px;padding:12px 14px;margin:16px 0 0}
+dl.terms dt{color:var(--ink2)}
+dl.terms dd{margin:0}
+@media (max-width:480px){dl.terms{grid-template-columns:1fr}dl.terms dd{margin-bottom:6px}}
 footer{color:var(--muted);font-size:13px;padding:32px 0 48px}
 footer a{color:var(--ink2);margin-right:14px}
 """
@@ -113,20 +121,22 @@ def index_html(cfg: dict) -> str:
         link = cfg.get("pay_links", {}).get(prod.key, "")
         ok = link.startswith("https://")
         B.append(f"<div class=\"card\" id=\"{prod.key}\"><h3>{html.escape(prod.title)}</h3>")
-        B.append(f"<div class=\"price\">{prod.price:,}円</div><div class=\"meta\">{html.escape(fill(prod.price_note, p))} お届け：{html.escape(prod.delivery)}</div>")
+        B.append(f"<div class=\"price\">{prod.price:,}円</div><div class=\"meta\">{html.escape(fill(prod.price_note, p))}お届け：{html.escape(prod.delivery)}</div>")
         for s in prod.sections:
             if s.head in ("このサービスの立場", "なぜ実験の形にするのか"):
                 continue
             B.append(f"<h3>{html.escape(s.head)}</h3>")
-            if s.items and s.paras:
-                B.append(f"<p>{html.escape(fill(s.paras[0], p))}</p>")
-            elif s.paras:
-                B += [f"<p>{html.escape(fill(x, p))}</p>" for x in s.paras]
+            B += [f"<p>{html.escape(fill(x, p))}</p>" for x in s.paras]
             if s.items:
                 tag = "ol" if s.numbered else "ul"
                 B.append(f"<{tag}>" + "".join(f"<li>{html.escape(fill(x, p))}</li>" for x in s.items) + f"</{tag}>")
-            if s.items and len(s.paras) > 1:
-                B += [f"<p>{html.escape(fill(x, p))}</p>" for x in s.paras[1:]]
+            B += [f"<p>{html.escape(fill(x, p))}</p>" for x in s.after]
+        # 最終確認：支払いの直前に、価格・支払いの時期・提供の時期・撤回の条件を出す（特定商取引法12条の6）
+        B.append("<dl class=\"terms\">"
+                 f"<dt>価格</dt><dd>{prod.price:,}円（税込）</dd>"
+                 f"<dt>支払いの時期・方法</dt><dd>{_esc_todo(cfg.get('payment', '【要記入】'))}</dd>"
+                 f"<dt>提供の時期</dt><dd>{_esc_todo(cfg.get('delivery', '【要記入】'))}</dd>"
+                 f"<dt>撤回・返金</dt><dd>{_esc_todo(cfg.get('cancel', '【要記入】'))}</dd></dl>")
         href = html.escape(link) if ok else "#"
         dis = "" if ok else ' aria-disabled="true"'
         B.append(f'<a class="btn" href="{href}"{dis}>申し込む（{prod.price:,}円）</a></div>')
@@ -139,7 +149,7 @@ def index_html(cfg: dict) -> str:
 
 
 def law_html(cfg: dict) -> str:
-    rows = "".join(f"<tr><th>{html.escape(label)}</th><td>{_esc_todo(cfg.get(k, '【要記入】'))}</td></tr>" for k, label in REQUIRED.items())
+    rows = "".join(f"<tr><th>{html.escape(label)}</th><td>{_esc_todo(cfg.get(k, '【要記入】'))}</td></tr>" for k, (label, _) in REQUIRED.items())
     prices = "".join(f"<tr><th>{html.escape(p.short)}</th><td>{p.price:,}円（税込）</td></tr>" for p in PRODUCTS.values())
     return _page(cfg, "特定商取引法に基づく表示", f"<section><h2>特定商取引法に基づく表示</h2><table>{rows}{prices}</table></section>")
 
