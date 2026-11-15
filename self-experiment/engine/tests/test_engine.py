@@ -718,7 +718,7 @@ SALES_BANNED = ("効果", "効く", "効き", "効能", "効力", "改善", "治
 def test_sales_texts_have_no_banned_expressions():
     # 出品文と定型文（お客さんの目に触れる文章）。見出しの注意書き（> で始まる行）は除く
     root = pathlib.Path(__file__).resolve().parents[2] / "sales"
-    files = sorted(root.glob("*.md"))
+    files = sorted(root.glob("**/*.md"))
     assert files
     for f in files:
         for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
@@ -726,3 +726,47 @@ def test_sales_texts_have_no_banned_expressions():
                 continue
             for w in SALES_BANNED:
                 assert w not in line, f"{f.name}:{n} に「{w}」"
+
+
+
+def test_sales_files_are_generated_from_one_source(tmp_path):
+    # sales/ の文面は channels/content.py と profiles.py から作ったものと一致する（手で直して食い違っていない）
+    from n1engine.channels.render import export_all
+
+    export_all(str(tmp_path))
+    root = pathlib.Path(__file__).resolve().parents[2] / "sales"
+    for f in tmp_path.rglob("*.md"):
+        rel = f.relative_to(tmp_path)
+        assert (root / rel).exists(), f"{rel} が sales/ にない（run sales --out ../sales で作り直す）"
+        assert (root / rel).read_text(encoding="utf-8") == f.read_text(encoding="utf-8"), f"{rel} が元と食い違う"
+
+
+def test_platform_rules_catch_links_contacts_and_long_titles():
+    from n1engine.channels.profiles import PLATFORMS
+    from n1engine.channels.render import validate
+
+    co = PLATFORMS["coconala"]
+    bad = validate(co, "詳しくは https://example.com へ。連絡は a@example.com まで")
+    assert any("URL" in x for x in bad) and any("メールアドレス" in x for x in bad)
+    assert validate(PLATFORMS["own_site"], "詳しくは https://example.com へ") == []
+    import dataclasses
+
+    short = dataclasses.replace(co, title_max=10)
+    assert any("タイトル" in x for x in validate(short, "本文", "とても長いタイトルの例です"))
+
+
+def test_site_pages_build_and_flag_missing_legal_items(tmp_path):
+    import json
+
+    from n1engine.channels.site import EXAMPLE_CONFIG, build
+
+    todo = build(dict(EXAMPLE_CONFIG), str(tmp_path))
+    assert {"seller", "email", "pay_links"} <= set(todo)
+    page = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "申し込む" in page and 'aria-disabled="true"' in page  # 支払いリンクが無い間はボタンを押せない
+    cfg = json.loads(json.dumps(EXAMPLE_CONFIG))
+    cfg.update(seller="山田", representative="山田", email="hello@example.com",
+               pay_links={"entry": "https://buy.example.com/a", "main": "https://buy.example.com/b"})
+    assert build(cfg, str(tmp_path)) == []
+    assert "https://buy.example.com/b" in (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "【要記入" not in (tmp_path / "law.html").read_text(encoding="utf-8")

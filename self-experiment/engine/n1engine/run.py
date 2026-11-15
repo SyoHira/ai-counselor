@@ -347,6 +347,56 @@ def cmd_baseline(a: argparse.Namespace) -> None:
         print(md)
 
 
+def cmd_sales(a: argparse.Namespace) -> None:
+    """販売先ごとの出品文・定型文を、1つの元（channels/content.py）から作る。"""
+    from .channels.content import PRODUCTS
+    from .channels.profiles import PLATFORMS
+    from .channels.render import export_all, listing, messages, title_for, validate
+
+    if a.out:
+        for f in export_all(a.out):
+            print(f"書き出しました: {f}")
+        return
+    keys = [a.platform] if a.platform else list(PLATFORMS)
+    for k in keys:
+        if k not in PLATFORMS:
+            raise SystemExit(f"販売先の一覧にありません: {k}（{', '.join(PLATFORMS)}）")
+        p = PLATFORMS[k]
+        for prod in PRODUCTS.values():
+            text = listing(p, prod)
+            print(text)
+            for x in validate(p, text, title_for(prod, p)):
+                print(f"  ！ {x}", file=sys.stderr)
+        print(messages(p))
+
+
+def cmd_pricing(a: argparse.Namespace) -> None:
+    from .channels.render import pricing
+
+    print(pricing(a.target))
+
+
+def cmd_site(a: argparse.Namespace) -> None:
+    """自分のサイト用の静的なページ（紹介・特定商取引法の表示・記録の扱い）を作る。"""
+    import json
+
+    from .channels.site import EXAMPLE_CONFIG, build
+
+    if a.example:
+        with open(a.example, "w", encoding="utf-8") as fh:
+            json.dump(EXAMPLE_CONFIG, fh, ensure_ascii=False, indent=2)
+        print(f"設定の見本を書き出しました: {a.example}（【要記入】を埋めてから --config で使う）")
+        return
+    if not (a.config and a.out):
+        raise SystemExit("--config と --out を指定してください（設定の見本は --example で作れます）")
+    with open(a.config, encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    todo = build(cfg, a.out)
+    print(f"書き出しました: {a.out}（index.html・law.html・privacy.html）")
+    if todo:
+        print("まだ公開しないでください。記入が残っている項目：" + "、".join(todo), file=sys.stderr)
+
+
 def _common(p):
     p.add_argument("--substance", help=f"成分（{', '.join(SUBSTANCES)}）")
     p.add_argument("--half-life", type=float, help="一覧に無い成分の半減期（時間）")
@@ -436,6 +486,21 @@ def main(argv: list[str] | None = None) -> None:
     bl.add_argument("--sims", type=int, default=60)
     bl.add_argument("--seed", type=int, default=0)
     bl.set_defaults(func=cmd_baseline)
+
+    sa = sub.add_parser("sales", help="販売先ごとの出品文・定型文を作る（1つの元から）")
+    sa.add_argument("--platform", help="1つの販売先だけ表示する")
+    sa.add_argument("--out", help="全販売先の文面を書き出すフォルダ（例：../sales）")
+    sa.set_defaults(func=cmd_sales)
+
+    pr = sub.add_parser("pricing", help="販売先ごとの手取りと、目標の月の売上に必要な件数")
+    pr.add_argument("--target", type=int, default=50000)
+    pr.set_defaults(func=cmd_pricing)
+
+    si = sub.add_parser("site", help="自分のサイト用の静的なページを作る")
+    si.add_argument("--config", help="設定（JSON）")
+    si.add_argument("--out", help="書き出すフォルダ")
+    si.add_argument("--example", help="設定の見本を書き出すファイル")
+    si.set_defaults(func=cmd_site)
 
     po = sub.add_parser("pool", help="研究層：複数人の1人実験を階層モデルでまとめる")
     po.add_argument("csv", nargs="+")
