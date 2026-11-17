@@ -890,6 +890,14 @@ def test_images_export_with_expected_sizes(tmp_path):
         import pytest
 
         pytest.skip("Chrome がない環境")
+    import subprocess
+
+    try:  # CI の runner の chromium は、サンドボックスの都合で起動できないことがある（起動できない環境は飛ばす）
+        images.export(str(tmp_path), ["icon"])
+    except subprocess.CalledProcessError as e:
+        import pytest
+
+        pytest.skip(f"Chrome を起動できない環境（終了コード {e.returncode}）")
     files = images.export(str(tmp_path), ["icon", "fig_decision", "thumb_standard"])
     assert len(files) == 3  # 大きさは export の中で SIZES と照合している
 
