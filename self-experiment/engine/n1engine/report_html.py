@@ -288,6 +288,8 @@ header h1{font-size:22px;line-height:1.4;margin:0 0 6px}
 header .sub{color:var(--ink2);font-size:13px;margin:0}
 section{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:18px 20px;margin-top:16px;break-inside:avoid-page}
 section.lead{border-left:4px solid var(--accent)}
+section.decision{border:2px solid var(--accent);background:var(--surface)}
+section.decision li strong{font-size:17px}
 h2{font-size:17px;margin:0 0 10px}
 h3{font-size:15px;margin:14px 0 6px}
 p{margin:8px 0}
@@ -367,9 +369,11 @@ def render_html(md: str, res, d: dict, primary: str, comment: str | None = None)
             if comment and comment.strip():
                 body.append(f'<section><h2>担当者からのコメント</h2><div class="staff">{html.escape(comment.strip())}</div></section>')
             continue
-        cls = ' class="lead"' if head == "結論" else ""
+        cls = ' class="lead"' if head == "結論" else ' class="decision"' if head == "続けるか・やめるかの材料" else ""
         body.append(f"<section{cls}><h2>{html.escape(head)}</h2>{content}</section>")
-        if head == "結論":
+        # 図は、結論（あれば続けるか・やめるかの材料の節）のすぐ後に置く
+        has_decision = any(h == "続けるか・やめるかの材料" for h, _ in sections)
+        if head == ("続けるか・やめるかの材料" if has_decision else "結論"):
             body.append(figures)
     return (
         "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">"

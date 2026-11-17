@@ -47,7 +47,7 @@ EXAMPLE_CONFIG = {
     "cancel": "記録用ファイルをお送りする前は全額返金します。お送りした後は、役務の性質上、返金いたしません。成分が7日ずつの入れ替えに向かないと分かった場合は全額返金します",
     "environment": "記録用ファイルは Excel 形式（.xlsx）、レポートは PDF です。Excel または互換のアプリと、PDF を開けるアプリが必要です",
     "period": "期間の定めはありません（受け付けを止めるときはこのページでお知らせします）",
-    "pay_links": {"entry": "【要記入：支払いリンク】", "main": "【要記入：支払いリンク】"},
+    "pay_links": {k: "【要記入：支払いリンク】" for k in ("entry", "standard", "premium", "partner")},
 }
 
 CSS = """
@@ -110,14 +110,14 @@ def _esc_todo(v: str) -> str:
 
 def index_html(cfg: dict) -> str:
     p = PLATFORMS["own_site"]
-    main, entry = PRODUCTS["main"], PRODUCTS["entry"]
+    main, entry = PRODUCTS["standard"], PRODUCTS["entry"]
     stance = next(s for s in main.sections if s.head == "このサービスの立場")
     why = next(s for s in main.sections if s.head == "なぜ実験の形にするのか")
     B = [f"<div class=\"hero\"><h1>{html.escape(main.title)}</h1><p>{html.escape(fill(main.lead, p))}</p>",
          "<ul class=\"stance\">" + "".join(f"<li>{html.escape(fill(x, p))}</li>" for x in stance.items) + "</ul></div>"]
     B.append("<section><h2>なぜ実験の形にするのか</h2>" + "".join(f"<p>{html.escape(fill(x, p))}</p>" for x in why.paras) + "</section>")
     B.append("<section id=\"services\"><h2>サービス</h2>")
-    for prod in (entry, main):
+    for prod in (entry, main, PRODUCTS["premium"], PRODUCTS["partner"]):
         link = cfg.get("pay_links", {}).get(prod.key, "")
         ok = link.startswith("https://")
         B.append(f"<div class=\"card\" id=\"{prod.key}\"><h3>{html.escape(prod.title)}</h3>")
@@ -143,7 +143,7 @@ def index_html(cfg: dict) -> str:
     B.append("</section>")
     B.append("<section><h2>お申し込みの前にご確認ください</h2><p>次のどれかに当てはまる方は、この実験を行わないでください。どれに当てはまるかを教えていただく必要はありません。</p><ul>"
              + "".join(f"<li>{html.escape(x)}</li>" for x in EXCLUSIONS) + "</ul></section>")
-    faq = {q: a for prod in (entry, main) for q, a in prod.faq}
+    faq = {q: a for prod in PRODUCTS.values() for q, a in prod.faq}
     B.append("<section id=\"faq\"><h2>よくある質問</h2><dl class=\"faq\">" + "".join(f"<dt>{html.escape(fill(q, p))}</dt><dd>{html.escape(fill(a, p))}</dd>" for q, a in faq.items()) + "</dl></section>")
     return _page(cfg, "1人実験の伴走", "".join(B))
 

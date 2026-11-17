@@ -57,6 +57,8 @@ class SheetConfig:
     bedtime: str = "23:00"
     waketime: str = "07:00"
     sequence: str = ""  # 空なら乱数で決める
+    monthly_cost: float | None = None  # 1つ目の月額（円。申し込み時に聞く。判断レポート用）
+    monthly_cost2: float | None = None
     client_id: str = ""
     version: str = VERSION
     extra: dict = field(default_factory=dict)
@@ -424,6 +426,18 @@ def read_workbook(path: str) -> tuple[dict[str, np.ndarray], dict[str, np.ndarra
         return data
 
     return to_data(exp, True), to_data(base, False), cfg
+
+
+def costs_of(cfg: SheetConfig) -> list[tuple[str, float]] | None:
+    """設定の月額から、判断レポートに渡す（呼び名, 月額）の一覧。無ければ None。"""
+    out = []
+    if cfg.monthly_cost:
+        out.append((cfg.item, float(cfg.monthly_cost)))
+    if cfg.combo and cfg.monthly_cost2:
+        out.append((cfg.item2, float(cfg.monthly_cost2)))
+    if cfg.combo and len(out) < 2:
+        return None  # 2成分は、両方の月額がそろったときだけ
+    return out or None
 
 
 def analyze_kwargs(cfg: SheetConfig) -> dict:

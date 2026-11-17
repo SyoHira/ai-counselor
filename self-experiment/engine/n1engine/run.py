@@ -130,12 +130,18 @@ def cmd_analyze(a: argparse.Namespace) -> None:
         a.item = a.item or (f"{cfg.item} × {cfg.item2}" if cfg.combo else cfg.item)
         a.outcome_label = a.outcome_label or (cfg.outcome_label if cfg.outcome == "outcome" else None)
         a.client_id = a.client_id or cfg.client_id or None
+        from .sheet import costs_of
+
+        costs = costs_of(cfg)
         res = analyze(d, mid=a.mid, seed=a.seed, pd=not a.no_pd, cohort=store, client_id=a.client_id,
                       blinded=a.blinded, consent=not a.no_consent, **kw)
     else:
         if not a.item:
             raise SystemExit("--item（試したもの）を指定してください")
         d = load(a.csv)
+        costs = None
+        if a.monthly_cost:
+            costs = [(a.name or a.item, a.monthly_cost)] + ([(parse_extra(a.extra[0]).label, a.monthly_cost2)] if a.extra and a.monthly_cost2 else [])
         direction = -1 if a.lower_is_better else None
         res = analyze(
             d,
@@ -163,7 +169,7 @@ def cmd_analyze(a: argparse.Namespace) -> None:
     if a.blinded and "belief" in d:
         blind = blind_integrity(d["belief"], d["treat"])
         belief = belief_association(d[a.outcome] * (res.primary.direction or 1), d["treat"], d["belief"])
-    md = render(item=a.item, outcome_label=a.outcome_label, res=res, blinded=a.blinded, blind=blind, belief=belief)
+    md = render(item=a.item, outcome_label=a.outcome_label, res=res, blinded=a.blinded, blind=blind, belief=belief, costs=costs)
     comment = _read_comment(a.comment)
     if comment:
         md = md.replace("<!-- ここに担当者のコメントを書く -->", comment.strip())
@@ -287,7 +293,7 @@ def cmd_sheet(a: argparse.Namespace) -> None:
         half_life=a.half_life, tmax=a.tmax, combo=bool(a.item2), item2=a.item2 or "", substance2=a.substance2 or "none",
         half_life2=a.half_life2, tmax2=a.tmax2, dose_time2=a.dose_time2, dose=a.dose_levels, cycle=a.cycle,
         cycle_length=a.cycle_length, last_period=a.last_period or "", wear=a.wear, bedtime=a.bedtime_time,
-        waketime=a.waketime_time, client_id=a.client_id or "",
+        waketime=a.waketime_time, client_id=a.client_id or "", monthly_cost=a.monthly_cost, monthly_cost2=a.monthly_cost2,
     )
     if cfg.substance == "custom" and not cfg.half_life:
         raise SystemExit("custom の成分には --half-life が必要です")
@@ -427,6 +433,8 @@ def main(argv: list[str] | None = None) -> None:
     an.add_argument("--extra", action="append", default=[], metavar="名前[:成分[:時刻]]",
                     help="掛け合わせる追加の成分・要因（記録の列 phase_<名前>）。成分は一覧の名前か half=半減期[,tmax=時間]。複数回指定できる")
     an.add_argument("--name", help="最初の成分・要因の呼び名（既定は成分名）")
+    an.add_argument("--monthly-cost", type=float, help="1つ目の月額（円）。指定すると「続けるか・やめるかの材料」の節が付く（記録用 Excel なら設定から読む）")
+    an.add_argument("--monthly-cost2", type=float, help="2つ目の月額（円。2成分のとき）")
     an.add_argument("--out", help="レポートの下書き（Markdown）")
     an.add_argument("--html", help="お客さんに渡すレポート（HTML、図つき）")
     an.add_argument("--pdf", help="お客さんに渡すレポート（PDF、図つき。Chrome / Chromium が必要）")
@@ -472,6 +480,8 @@ def main(argv: list[str] | None = None) -> None:
     sh.add_argument("--wear", action="store_true", help="睡眠中の心拍を機器で測っている")
     sh.add_argument("--bedtime", dest="bedtime_time", default="23:00")
     sh.add_argument("--waketime", dest="waketime_time", default="07:00")
+    sh.add_argument("--monthly-cost", type=float, help="1つ目の月額（円。申し込み時に聞く）")
+    sh.add_argument("--monthly-cost2", type=float, help="2つ目の月額（円）")
     sh.add_argument("--client-id")
     sh.add_argument("--seed", type=int)
     sh.add_argument("--force", action="store_true", help="向かない成分でも作る")

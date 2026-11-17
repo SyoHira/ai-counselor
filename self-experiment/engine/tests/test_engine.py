@@ -766,7 +766,61 @@ def test_site_pages_build_and_flag_missing_legal_items(tmp_path):
     assert "申し込む" in page and 'aria-disabled="true"' in page  # 支払いリンクが無い間はボタンを押せない
     cfg = json.loads(json.dumps(EXAMPLE_CONFIG))
     cfg.update(seller="山田", representative="山田", email="hello@example.com",
-               pay_links={"entry": "https://buy.example.com/a", "main": "https://buy.example.com/b"})
+               pay_links={k: f"https://buy.example.com/{k}" for k in ("entry", "standard", "premium", "partner")})
     assert build(cfg, str(tmp_path)) == []
-    assert "https://buy.example.com/b" in (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "https://buy.example.com/standard" in (tmp_path / "index.html").read_text(encoding="utf-8")
     assert "【要記入" not in (tmp_path / "law.html").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------- 続けるか・やめるかの材料
+
+
+def _v(p_better, p_meaningful=None, lo=0.1, hi=2.0, mean=1.0):
+    from n1engine.model import Verdict
+
+    return Verdict(p_better=p_better, p_meaningful=p_better if p_meaningful is None else p_meaningful, effect_mean=mean,
+                   effect_low=lo, effect_high=hi, rho_mean=0.3, label="")
+
+
+def test_decision_kinds_and_wording():
+    from n1engine import decision as dec
+
+    assert dec.classify(_v(0.98, 0.9), 1.0, 1) == dec.GOOD
+    assert dec.classify(_v(0.98, 0.4), 1.0, 1) == dec.SMALL  # 良い方向だが意味のある大きさとは言えない
+    assert dec.classify(_v(0.85, lo=-0.3), 1.0, 1) == dec.MAYBE
+    assert dec.classify(_v(0.5, lo=-1.0, hi=1.2), 1.0, 1) == dec.UNCLEAR
+    assert dec.classify(_v(0.02, lo=-2.0, hi=-0.1), 1.0, 1) == dec.BAD
+    assert dec.classify(_v(0.9), 1.0, 0) is None  # 良し悪しを決めない項目
+    d = dec.decide(_v(0.5, lo=-1.0, hi=1.2), 1.0, 1, "点")
+    assert "見つかりませんでした" in d.headline and "無いとは言い切れません" in d.body and "1.2点以内" in d.body
+    # 分の項目（意味のある大きさの基準なし）で、「意味のある大きさ」と書かない
+    g = dec.decide(_v(0.97), None, -1, "分")
+    assert "意味のある大きさ以上である確率" not in g.body and "97%" in g.body
+
+
+def test_decision_section_in_report_for_single_and_combo(tmp_path):
+    from n1engine.channels.render import BANNED
+    from n1engine.pipeline import Factor, analyze
+    from n1engine.report import render
+
+    res = analyze(_factorial_record(5, (2.5, -2.0), 2.5), primary="outcome", extras=[Factor("b", "B")], n_draws=300, null_sims=50, secondary=False)
+    md = render(item="A×B", outcome_label=None, res=res, blinded=False, costs=[("A", 3000), ("B", 1500)])
+    assert "## 続けるか・やめるかの材料" in md and "| A だけ" in md.replace("Aだけ", "A だけ") or "Aだけ" in md
+    assert "36,000円" in md and "18,000円" in md and "54,000円" in md  # A・B・両方の1年の支払い
+    for w in BANNED:
+        assert w not in md, w
+    plain = render(item="A×B", outcome_label=None, res=res, blinded=False)
+    assert "続けるか・やめるかの材料" not in plain  # 月額が無ければ節を出さない
+
+
+def test_monthly_cost_flows_from_sheet_to_report(tmp_path):
+    from n1engine.run import main
+    from n1engine.sheet import SheetConfig, make_workbook
+
+    p = tmp_path / "rec.xlsx"
+    make_workbook(SheetConfig(item="マグネシウム", substance="magnesium", outcome="sol", start_date="2026-11-20", monthly_cost=2500), str(p), seed=2)
+    _fill_sheet(str(p), effect=-7.0, seed=2)
+    out = tmp_path / "r.md"
+    main(["analyze", str(p), "--out", str(out), "--comment", "x"])
+    md = out.read_text(encoding="utf-8")
+    assert "月 2,500円" in md and "30,000円" in md

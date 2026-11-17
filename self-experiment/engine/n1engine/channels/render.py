@@ -22,7 +22,7 @@ EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 
 def fill(text: str, p: Platform) -> str:
     return (text.replace("{msg}", p.msg_place).replace("{send}", p.send).replace("{buy}", p.buy)
-            .replace("{approve}", p.approve).replace("{monitor}", p.monitor))
+            .replace("{approve}", p.approve))
 
 
 def _price(prod: Product, p: Platform) -> str:
@@ -93,7 +93,7 @@ def validate(p: Platform, text: str, title: str | None = None) -> list[str]:
     return bad
 
 
-LABEL = {"entry": "入口", "main": "本番"}
+LABEL = {"entry": "入口", "standard": "標準", "premium": "上級", "partner": "伴走者向け（1件）"}
 
 
 def take_home(p: Platform, price: int) -> int:
@@ -103,9 +103,9 @@ def take_home(p: Platform, price: int) -> int:
 def pricing(target: int = 50000) -> str:
     L = [f"# 販売先ごとの手取りと、月{target:,}円に必要な件数", "",
          "手数料は profiles.py の値（出典と確認日はそこに書いてある）。振込手数料・消費税の扱いは含めていない。", "",
-         "| 販売先 | 手数料 | " + " | ".join(f"{LABEL.get(pr.key, pr.key)} {pr.price:,}円の手取り" for pr in PRODUCTS.values()) + " | 本番だけで月の目標に必要な件数 | 買い手の支払い（本番） | 売上が入る時期 |",
+         "| 販売先 | 手数料 | " + " | ".join(f"{LABEL.get(pr.key, pr.key)} {pr.price:,}円の手取り" for pr in PRODUCTS.values()) + " | 標準だけで月の目標に必要な件数 | 買い手の支払い（標準） | 売上が入る時期 |",
          "|---|---|" + "---|" * len(PRODUCTS) + "---|---|---|"]
-    main = PRODUCTS["main"]
+    main = PRODUCTS["standard"]
     for p in PLATFORMS.values():
         fee = f"{p.fee_rate * 100:g}%" + (f"＋{p.fee_fixed:g}円" if p.fee_fixed else "")
         th = [f"{take_home(p, pr.price):,}円" for pr in PRODUCTS.values()]

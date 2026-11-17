@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from . import VERSION
+from . import decision as dec
 from .diagnostics import ESS_MIN, RHAT_MAX
 from .domain.pk import STEADY_HALF_LIVES
 from .domain.variables import label as var_label
@@ -129,6 +130,24 @@ def _substance_block(L, res, s, dose_hour, residual, washout, suit, p, label=Non
     L.append("")
 
 
+def _decision_section(L, res, p, costs):
+    """続けるか・やめるかの材料。costs=[(呼び名, 月額)]（1つ目の成分から順。2成分なら2つ）。"""
+    unit = "点" if p.unit == "0〜10" else p.unit
+    mid = res.mid if not p.log else None
+    if p.multi:
+        facs = p.multi["factors"]
+        rows = []
+        for k, (lab, monthly) in enumerate(costs[: len(facs)]):
+            rows.append((f"{facs[k]['label']}だけ", monthly, dec.decide(facs[k]["v"], mid, p.direction, unit, p.log)))
+        if len(costs) >= 2:
+            rows.append((p.multi["both_label"], sum(m for _, m in costs), dec.decide(p.multi["both"], mid, p.direction, unit, p.log)))
+        dec.section(L, rows)
+    else:
+        v = res.pooled_v or p.v
+        label, monthly = costs[0]
+        dec.section(L, [(label, monthly, dec.decide(v, mid, p.direction, unit, p.log))])
+
+
 def _cond_row(r: OutcomeResult, label: str, v, null=None) -> str:
     """複数の要因の結果の表の1行。"""
     if r.direction == 0:
@@ -226,7 +245,7 @@ def _lag_section(L, label, pd_table, excluded, shape_table, priors_n=0, with_sha
         L.append("")
 
 
-def render(*, item: str, outcome_label: str | None, res: Analysis, blinded: bool, blind=None, belief=None) -> str:
+def render(*, item: str, outcome_label: str | None, res: Analysis, blinded: bool, blind=None, belief=None, costs: list | None = None) -> str:
     p = res.primary
     name = outcome_label or p.label
     L = []
@@ -239,6 +258,8 @@ def render(*, item: str, outcome_label: str | None, res: Analysis, blinded: bool
         _multi_head(L, res, p, name)
     else:
         _single_head(L, res, p, name)
+    if costs:
+        _decision_section(L, res, p, costs)
 
     L.append("## 期待の分")
     L.append("")
