@@ -20,6 +20,8 @@ python -m n1engine.run analyze 記録.xlsx --pdf レポート.pdf --comment @コ
 # 販売先への展開：出品文・定型文（販売先ごと）、手取りの比較、自分のサイト
 python -m n1engine.run sales --out ../sales
 python -m n1engine.run pricing --target 50000
+python -m n1engine.run brand --example brand.json   # 資格・経歴を事実のとおりに埋める
+python -m n1engine.run brand --config brand.json --out ../sales/brand   # プロフィール・SNS計画・図（PNG）
 python -m n1engine.run site --example site.json   # 【要記入】を埋めてから
 python -m n1engine.run site --config site.json --out 公開用
 python -m pytest -q tests                # 壊れていないかの確認（2分前後）

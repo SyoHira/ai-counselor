@@ -15,7 +15,7 @@
 
 ## 目標
 
-**2ヶ月で月5万円。** 本価格 ¥15,000 なら手数料22%を引いて月5件。達成できるかは調査では保証できず、出品して測る（[docs/01-service.md](docs/01-service.md)）。
+**2ヶ月で月5万円。** 標準 ¥9,800（最初の10件は ¥5,800）の手取りは本価格で7,644円。標準だけなら月7件、上級・延長・伴走者向けが混ざればそれより少ない。達成できるかは調査では保証できず、出品して測る（[docs/01-service.md](docs/01-service.md)）。
 
 ## 構成
 
@@ -26,7 +26,9 @@
 | [docs/03-marketing.md](docs/03-marketing.md) | SNS、量子の出し方、守ること |
 | [docs/04-compliance.md](docs/04-compliance.md) | 規制の整理と、出品前に確認すること |
 | [docs/05-research.md](docs/05-research.md) | 研究層（量子認知の検証）と、最新研究の取り込み方 |
+| [docs/06-launch.md](docs/06-launch.md) | 売り出しの準備：アカウントの役割、プロフィール、売れる図の使い方、30日のSNS計画、続ける線 |
 | [sales/](sales/) | 販売先ごと（ココナラ・note・MENTA・タイムチケット・自分のサイト）の出品文・定型文・手取りの比較・出品前に確かめること。`engine/n1engine/channels/` の1つの元から作る生成物。禁止語・外部リンクはテストで確認 |
+| [sales/brand/](sales/brand/) | プロフィール文・SNS 30日の計画・図（PNG 21枚）。`run brand` で作る生成物 |
 | [form/](form/) | 自分用の毎日の記録フォーム（claude.ai のアーティファクト。作成者だけが記録でき、CSV で書き出す）。ココナラのお客さんには使わない（外部への誘導になるため。お客さんは Excel） |
 | [engine/](engine/) | 分析エンジン（Python）。しくみの解説は [engine/README.md](engine/README.md)、検証結果は [engine/CALIBRATION.md](engine/CALIBRATION.md) |
 

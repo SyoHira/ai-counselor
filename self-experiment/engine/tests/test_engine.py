@@ -824,3 +824,88 @@ def test_monthly_cost_flows_from_sheet_to_report(tmp_path):
     main(["analyze", str(p), "--out", str(out), "--comment", "x"])
     md = out.read_text(encoding="utf-8")
     assert "月 2,500円" in md and "30,000円" in md
+
+
+# ---------------------------------------------------------------- アカウント設計・SNS・画像
+
+_BRAND_FILLED = {"call_name": "テスト太郎", "credentials": "医療の資格はありません。診断や指導はしません。", "background": "自分のサプリ代を確かめたくて始めました。",
+                 "coconala_name": "1人実験ノート"}
+
+
+def test_brand_texts_are_clean_and_within_limits():
+    from n1engine.channels import brand
+
+    t = brand.texts(_BRAND_FILLED)
+    assert brand.validate(t) == [] and brand.unfilled(t) == []
+    # 未記入のままなら、公開前の警告に出る
+    assert {"x_bio", "note_bio", "coconala_profile"} <= set(brand.unfilled(brand.texts()))
+    # 上限を超える経歴は検出される
+    long = brand.texts({**_BRAND_FILLED, "credentials": "あ" * 200})
+    assert any(x.startswith("x_bio") for x in brand.validate(long))
+
+
+def test_x_weight_counts_fullwidth_as_two():
+    from n1engine.channels.brand import x_weight
+
+    assert x_weight("abc") == 3 and x_weight("あいう") == 6 and x_weight("a、b") == 4
+
+
+def test_sns_posts_are_valid_and_use_existing_images():
+    from n1engine.channels import images, sns
+
+    assert sns.validate(asset_keys=set(images.ASSETS)) == []
+    assert len(sns.POSTS) == 22 and [p.day for p in sns.POSTS] == list(range(1, 23))
+    # 自分の記録の投稿は、埋めるまで印が残る（作ったデータを実際の記録として出さない）
+    assert sns.unfilled() == [3, 10, 17, 21]
+
+
+def test_image_texts_have_no_banned_words_urls_or_emails():
+    from n1engine.channels import images
+    from n1engine.channels.render import BANNED, EMAIL, URL
+
+    for key in images.ASSETS:
+        text, _ = images.html_of(key)
+        body = text.split("<body>", 1)[1]  # <head> のフォント読み込みの URL は対象外
+        import re
+
+        visible = re.sub(r"<[^>]+>", " ", body)
+        for w in BANNED:
+            assert w not in visible, (key, w)
+        assert not URL.search(visible) and not EMAIL.search(visible), key
+
+
+def test_every_sample_figure_is_labeled_as_example():
+    from n1engine.channels import images
+
+    for key in ("fig_decision", "card_jitter", "card_gap", "thumb_entry", "thumb_standard"):
+        text, _ = images.html_of(key)
+        assert "見本（架空" in text or "説明用の例（架空）" in text, key
+
+
+def test_images_export_with_expected_sizes(tmp_path):
+    from n1engine.channels import images
+    from n1engine.report_html import find_chrome
+
+    if not find_chrome():
+        import pytest
+
+        pytest.skip("Chrome がない環境")
+    files = images.export(str(tmp_path), ["icon", "fig_decision", "thumb_standard"])
+    assert len(files) == 3  # 大きさは export の中で SIZES と照合している
+
+
+def test_brand_docs_are_generated_from_one_source(tmp_path):
+    import pathlib
+
+    from n1engine.channels import brand, sns
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "sales" / "brand"
+    assert (root / "profiles.md").read_text(encoding="utf-8") == brand.render_md(), "run brand --out ../sales/brand で作り直す"
+    assert (root / "sns-plan.md").read_text(encoding="utf-8") == sns.render_md(), "run brand --out ../sales/brand で作り直す"
+
+
+def test_brand_command_writes_files(tmp_path):
+    from n1engine.run import main
+
+    main(["brand", "--out", str(tmp_path), "--no-images"])
+    assert (tmp_path / "profiles.md").exists() and (tmp_path / "sns-plan.md").exists()

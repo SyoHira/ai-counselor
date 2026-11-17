@@ -8,6 +8,9 @@
     python -m n1engine.run analyze 記録.csv --item "カフェイン×テアニン" --outcome sol \
         --substance caffeine --dose-hour 15 --extra theanine:theanine:15
 
+  プロフィール文・SNS 30日の計画・画像：
+    python -m n1engine.run brand --out ../sales/brand（--example で設定の見本、--config で資格・経歴を入れる）
+
   実験前の日数の見積もり（普段通りの記録が7日以上あるとき）：
     python -m n1engine.run plan 普段の記録.csv --substance caffeine --dose-hour 15 --timing night
 
@@ -403,6 +406,44 @@ def cmd_site(a: argparse.Namespace) -> None:
         print("まだ公開しないでください。記入が残っている項目：" + "、".join(todo), file=sys.stderr)
 
 
+def cmd_brand(a: argparse.Namespace) -> None:
+    """アカウント設計の文面（プロフィール・SNS 30日の計画）と、販売・SNS 用の画像（PNG）を作る。"""
+    import json
+    import pathlib
+
+    from .channels import brand, images, sns
+
+    if a.example:
+        with open(a.example, "w", encoding="utf-8") as fh:
+            json.dump(brand.EXAMPLE_CONFIG, fh, ensure_ascii=False, indent=2)
+        print(f"設定の見本を書き出しました: {a.example}（【要記入】を事実のとおりに埋めてから --config で使う）")
+        return
+    if not a.out:
+        raise SystemExit("--out を指定してください（設定の見本は --example で作れます）")
+    cfg = None
+    if a.config:
+        with open(a.config, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    t = brand.texts(cfg)
+    problems = brand.validate(t) + sns.validate(asset_keys=set(images.ASSETS))
+    if problems:
+        raise SystemExit("決まりに合わない文面があります：\n" + "\n".join(problems))
+    root = pathlib.Path(a.out)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "profiles.md").write_text(brand.render_md(cfg), encoding="utf-8")
+    (root / "sns-plan.md").write_text(sns.render_md(), encoding="utf-8")
+    print(f"書き出しました: {root}/profiles.md・sns-plan.md")
+    if not a.no_images:
+        files = images.export(str(root / "img"))
+        print(f"画像 {len(files)} 枚: {root}/img/")
+    todo = brand.unfilled(t)
+    if todo:
+        print("まだ公開しないでください。【要記入】が残っているプロフィール：" + "、".join(todo), file=sys.stderr)
+    days = sns.unfilled()
+    if days:
+        print("実際の記録で埋めてから出す投稿（【自分の記録】）：" + "、".join(f"{d}日目" for d in days), file=sys.stderr)
+
+
 def _common(p):
     p.add_argument("--substance", help=f"成分（{', '.join(SUBSTANCES)}）")
     p.add_argument("--half-life", type=float, help="一覧に無い成分の半減期（時間）")
@@ -511,6 +552,13 @@ def main(argv: list[str] | None = None) -> None:
     si.add_argument("--out", help="書き出すフォルダ")
     si.add_argument("--example", help="設定の見本を書き出すファイル")
     si.set_defaults(func=cmd_site)
+
+    br = sub.add_parser("brand", help="プロフィール文・SNS 30日の計画・売れる図（PNG）を作る")
+    br.add_argument("--config", help="運営者の情報（JSON。資格・経歴は事実のとおりに）")
+    br.add_argument("--out", help="書き出すフォルダ（例：../sales/brand）")
+    br.add_argument("--example", help="設定の見本を書き出すファイル")
+    br.add_argument("--no-images", action="store_true", help="画像を作らない（Chrome が無い環境）")
+    br.set_defaults(func=cmd_brand)
 
     po = sub.add_parser("pool", help="研究層：複数人の1人実験を階層モデルでまとめる")
     po.add_argument("csv", nargs="+")
