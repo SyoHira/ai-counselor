@@ -22,6 +22,7 @@ python -m n1engine.run sales --out ../sales
 python -m n1engine.run pricing --target 50000
 python -m n1engine.run brand --example brand.json   # 資格・経歴を事実のとおりに埋める
 python -m n1engine.run brand --config brand.json --out ../sales/brand   # プロフィール・SNS計画・図（PNG）
+python -m n1engine.run ledger summary --file ledger.csv --target 50000   # 受注の台帳（add / update / summary）
 python -m n1engine.run site --example site.json   # 【要記入】を埋めてから
 python -m n1engine.run site --config site.json --out 公開用
 python -m pytest -q tests                # 壊れていないかの確認（2分前後）

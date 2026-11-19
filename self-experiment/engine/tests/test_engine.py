@@ -917,3 +917,45 @@ def test_brand_command_writes_files(tmp_path):
 
     main(["brand", "--out", str(tmp_path), "--no-images"])
     assert (tmp_path / "profiles.md").exists() and (tmp_path / "sns-plan.md").exists()
+
+
+# ---------------------------------------------------------------- note の記事・受注の台帳
+
+def test_note_articles_are_clean_and_mark_unfilled_record():
+    from n1engine.channels import articles, images
+
+    assert articles.validate(asset_keys=set(images.ASSETS)) == []
+    assert articles.unfilled() == ["03-my-record"]  # 自分の記録の記事は、埋めるまで印が残る
+    # 公開データの記事は、どちらの行の判定も、幅の言葉も、出典と許諾も落とさない
+    a2 = next(a for a in articles.ARTICLES if a.slug == "02-melatonin")
+    for needle in ("はっきりしない", "悪い方向に差がありそう", "MITライセンス", "+0.07", "−0.11", "メラトニンの働きを示すものではありません"):
+        assert needle in a2.body, needle
+
+
+def test_melatonin_figure_states_both_verdicts():
+    from n1engine.channels import images
+
+    html, _ = images.html_of("fig_melatonin")
+    assert "はっきりしない" in html and "悪い方向に差がありそう" in html
+
+
+def test_ledger_add_update_summary(tmp_path):
+    import datetime as dt
+
+    from n1engine import ledger
+
+    f = str(tmp_path / "l.csv")
+    a = ledger.add(f, "2026-12-01", "coconala", "standard", monitor=True)
+    b = ledger.add(f, "2026-12-03", "coconala", "entry")
+    assert (a, b) == ("C001", "C002")
+    rows = ledger.load(f)
+    assert rows[0]["price"] == "5800" and rows[1]["price"] == "2000"
+    ledger.update(f, "C001", delivered="2027-01-12", minutes=35, extended=True)
+    text = ledger.summary(ledger.load(f), today=dt.date(2027, 3, 30))
+    assert "受注 2 件" in text and "平均 42日" in text and "平均 35分" in text
+    assert "9,204円" in text  # (5,800+4,000)円と2,000円の、ココナラ手数料22%を引いた手取り
+    assert "C001：2027-04-12（あと13日）" in text and "未納品：C002" in text
+    with pytest.raises(SystemExit):
+        ledger.update(f, "C001", delivered="2026-11-01")  # 受付日より前
+    with pytest.raises(SystemExit):
+        ledger.add(f, "2026-12-05", "coconala", "entry", monitor=True)  # モニター価格が無い商品

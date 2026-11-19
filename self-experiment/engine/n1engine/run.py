@@ -411,7 +411,7 @@ def cmd_brand(a: argparse.Namespace) -> None:
     import json
     import pathlib
 
-    from .channels import brand, images, sns
+    from .channels import articles, brand, images, sns
 
     if a.example:
         with open(a.example, "w", encoding="utf-8") as fh:
@@ -425,23 +425,47 @@ def cmd_brand(a: argparse.Namespace) -> None:
         with open(a.config, encoding="utf-8") as fh:
             cfg = json.load(fh)
     t = brand.texts(cfg)
-    problems = brand.validate(t) + sns.validate(asset_keys=set(images.ASSETS))
+    problems = brand.validate(t) + sns.validate(asset_keys=set(images.ASSETS)) + articles.validate(asset_keys=set(images.ASSETS))
     if problems:
         raise SystemExit("決まりに合わない文面があります：\n" + "\n".join(problems))
     root = pathlib.Path(a.out)
     root.mkdir(parents=True, exist_ok=True)
     (root / "profiles.md").write_text(brand.render_md(cfg), encoding="utf-8")
     (root / "sns-plan.md").write_text(sns.render_md(), encoding="utf-8")
-    print(f"書き出しました: {root}/profiles.md・sns-plan.md")
+    notes = articles.export(str(root / "note"))
+    print(f"書き出しました: {root}/profiles.md・sns-plan.md・note/（記事 {len(notes)} 本）")
     if not a.no_images:
         files = images.export(str(root / "img"))
         print(f"画像 {len(files)} 枚: {root}/img/")
     todo = brand.unfilled(t)
     if todo:
         print("まだ公開しないでください。【要記入】が残っているプロフィール：" + "、".join(todo), file=sys.stderr)
+    todo_notes = articles.unfilled()
+    if todo_notes:
+        print("実際の記録で埋めてから出す note の記事：" + "、".join(todo_notes), file=sys.stderr)
     days = sns.unfilled()
     if days:
         print("実際の記録で埋めてから出す投稿（【自分の記録】）：" + "、".join(f"{d}日目" for d in days), file=sys.stderr)
+
+
+def cmd_ledger(a: argparse.Namespace) -> None:
+    """受注の台帳（CSV）に入れる・直す・集計する。お客様の名前や記録の中身は入れない。"""
+    import datetime as dt
+
+    from . import ledger
+
+    if a.action == "add":
+        if not (a.date and a.platform and a.product):
+            raise SystemExit("add には --date --platform --product が要ります")
+        print(ledger.add(a.file, a.date, a.platform, a.product, monitor=a.monitor, price=a.price, note=a.note or ""))
+    elif a.action == "update":
+        if not a.id:
+            raise SystemExit("update には --id が要ります")
+        ledger.update(a.file, a.id, delivered=a.delivered, minutes=a.minutes, extended=a.extended, note=a.note)
+        print(f"{a.id} を更新しました")
+    else:
+        today = dt.date.fromisoformat(a.today) if a.today else None
+        print(ledger.summary(ledger.load(a.file), today=today, target=a.target))
 
 
 def _common(p):
@@ -559,6 +583,23 @@ def main(argv: list[str] | None = None) -> None:
     br.add_argument("--example", help="設定の見本を書き出すファイル")
     br.add_argument("--no-images", action="store_true", help="画像を作らない（Chrome が無い環境）")
     br.set_defaults(func=cmd_brand)
+
+    le = sub.add_parser("ledger", help="受注の台帳：入れる（add）・直す（update）・集計する（summary）")
+    le.add_argument("action", choices=["add", "update", "summary"])
+    le.add_argument("--file", default="ledger.csv")
+    le.add_argument("--date", help="受付日（YYYY-MM-DD）")
+    le.add_argument("--platform", help="販売先（coconala・note・menta・timeticket・own_site）")
+    le.add_argument("--product", help="商品（entry・standard・premium・partner）")
+    le.add_argument("--monitor", action="store_true", help="モニター価格で受けた")
+    le.add_argument("--price", type=int, help="価格（既定は商品の価格）")
+    le.add_argument("--id", help="案件番号（update）")
+    le.add_argument("--delivered", help="納品日（YYYY-MM-DD）")
+    le.add_argument("--minutes", type=int, help="1件にかかった作業時間（分）")
+    le.add_argument("--extended", action="store_true", help="56日に延長した")
+    le.add_argument("--note", help="メモ（名前・連絡先・記録の中身は書かない）")
+    le.add_argument("--target", type=int, default=50000)
+    le.add_argument("--today", help="集計の基準日（既定は今日）")
+    le.set_defaults(func=cmd_ledger)
 
     po = sub.add_parser("pool", help="研究層：複数人の1人実験を階層モデルでまとめる")
     po.add_argument("csv", nargs="+")

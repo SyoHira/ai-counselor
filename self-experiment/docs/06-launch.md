@@ -7,7 +7,7 @@ python -m n1engine.run brand --example brand.json     # 設定の見本。【要
 python -m n1engine.run brand --config brand.json --out ../sales/brand
 ```
 
-出力：`sales/brand/profiles.md`（プロフィール文と字数）・`sns-plan.md`（30日の投稿・note記事・計る数字・続ける線）・`img/`（PNG 21枚）。`sales/brand/` のうち md はテストで元と一致を確認している（直すときは元を直して作り直す）。
+出力：`sales/brand/profiles.md`（プロフィール文と字数）・`sns-plan.md`（30日の投稿・note記事の計画・計る数字・続ける線）・`note/`（note記事3本の下書き）・`img/`（PNG 21枚）。`sales/brand/` のうち md はテストで元と一致を確認している（直すときは元を直して作り直す）。
 
 ## 1. アカウントの役割
 
@@ -73,3 +73,27 @@ python -m n1engine.run brand --config brand.json --out ../sales/brand
 3. 出品前の確認（[sales/README.md](../sales/README.md) の「出品前に確かめること」、ココナラのヘルプ原文、運営への事前問い合わせ）
 4. ココナラに入口と標準を出品（サムネイルは `img/thumb_*.png`）。note と X のアカウントを同じ名前・アイコンで作る
 5. 30日の計画を始める。毎週、計る数字を数える
+
+## 7. note の記事（下書きあり）
+
+`sales/brand/note/` に3本の下書きがある。`［画像：名前］` の場所に `img/名前.png` を入れて、note の編集画面に貼る。
+
+| 記事 | 状態 |
+|---|---|
+| `01-intro.md` 入門：サプリを続けるか決める前に、自分の記録で確かめる方法 | 出せる。確かめた事実だけで書いてある |
+| `02-melatonin.md` 検証：公開データ（メラトニン70日）に同じ方法を当ててみた | 出せる。出典と許諾（MIT）を本文に入れてある。前の夜の判定（悪い方向に差がありそう）も、幅が差なしをまたぐことも、1人の記録で成分の働きは言えないことも書いてある |
+| `03-my-record.md` 自分の28日1人実験の記録 | 【自分の記録】を実際の記録で埋めてから出す |
+
+## 8. 売り出してから：受注の台帳
+
+30/60/90日の線（`sns-plan.md`）と月5万円の目標は、数えないと判断できない。受注を台帳に入れて集計する。
+
+```
+python -m n1engine.run ledger add    --file ledger.csv --date 2026-12-01 --platform coconala --product standard --monitor
+python -m n1engine.run ledger update --file ledger.csv --id C001 --delivered 2027-01-12 --minutes 35 --extended
+python -m n1engine.run ledger summary --file ledger.csv --target 50000
+```
+
+- 台帳に入れるのは、案件番号・日付・金額・作業時間・延長の有無だけ。お客様の名前・連絡先・記録の中身は入れない
+- 集計で分かること：件数・売上・手取り、受付から納品までの日数、1件の作業時間（見込みの30分が合っているか）、標準から56日への延長の選択率、お預かりした記録の削除の期限（納品の90日後）
+- 作業時間が30分を大きく超えるなら、価格か自動化の見直しの材料になる

@@ -177,7 +177,7 @@ def b_fig_power():
 
 def b_fig_melatonin():
     svg = svg_interval(1050, [("同じ日の夜", 0.07, -0.12, 0.26), ("前の夜", -0.11, -0.29, 0.07)], -0.5, 0.5, rowh=120)
-    return page(1200, 675, f'<div class="c" style="gap:10px"><div class="tag">公開されている1人実験のデータ（メラトニン70日）</div>{headline("気分の評価の差：判定は「はっきりしない」", 42)}{svg}<div class="sub" style="font-size:19px">点が推定した差（0〜10点）、横線が90%の幅。幅が「差なし」をまたいでいる。この1人のこの期間の記録の話です。データ：nof1kit（Miura Meng 医師、MIT ライセンス）</div></div>{brand_row()}')
+    return page(1200, 675, f'<div class="c" style="gap:10px"><div class="tag">公開されている1人実験のデータ（メラトニン70日）</div>{headline("気分の評価の差：同じ日の夜は「はっきりしない」", 42)}{svg}<div class="sub" style="font-size:20px;line-height:1.6">点が推定した差（0〜10点）、横線が90%の幅。同じ日の夜は幅が「差なし」をまたぎ、判定は「はっきりしない」。前の夜は −0.11 で、判定は「悪い方向に差がありそう」（良かった確率14%）。この1人のこの期間の記録の話です。<br>データ：nof1kit（Miura Meng 医師、MIT ライセンス）</div></div>{brand_row()}')
 
 
 def b_fig_decision():
